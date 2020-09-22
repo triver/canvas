@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+	<title>Rubics Cube</title>
+	<style>
+		* {
+			-webkit-touch-callout: none; 
+			-webkit-text-size-adjust: none;
+			-webkit-tap-highlight-color: rgba(0,0,0,0); 
+			-webkit-user-select: none;
+			text-size-adjust: none; 
+			touch-callout: none; 
+			user-select: none;
+			tap-highlight-color: rgba(0,0,0,0); 
+		}
+		body {
+		  margin: 0;
+		  font-family: monospace;
+		}
+		#canvas {
+		  display: block;
+		  width: 100vw;
+		  height: 100vh;
+		  background: black;
+		}
+		#trace{
+			position: fixed;
+			left:0;
+			top:0;
+			background: black;
+			width:40px;
+			height: 20px;
+			color: #ccc;
+			padding: 5px;
+		}
+    </style>
+	<body>
+		
+	<canvas id="canvas"></canvas>
+	<div id="trace"></div>
+	<script src="../gl-matrix.js"></script>
+	<script src="../data-arrays.js"></script>
+	<script src="../func-gl.js"></script>
+	<script src="rubics.js"></script>
+	
+	
+	<script>
+		
+		
+		"use strict"
+		
+		const HPI = Math.PI*0.5
+		const QPI = Math.PI*0.25
+		
+		CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+			this.beginPath();
+			this.moveTo(x + radius, y);
+			this.lineTo(x + width - radius, y);
+			this.quadraticCurveTo(x + width, y, x + width, y + radius);
+			this.lineTo(x + width, y + height - radius);
+			this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+			this.lineTo(x + radius, y + height);
+			this.quadraticCurveTo(x, y + height, x, y + height - radius);
+			this.lineTo(x, y + radius);
+			this.quadraticCurveTo(x, y, x + radius, y);
+			this.closePath();
+		}
+		
+		const buffer = document.createElement('canvas')
+		const btx = buffer.getContext('2d')
+		
+		function textureData(size, offset, radius){
+			
+			const s = size * 0.5
+			
+			buffer.width = size
+			buffer.height = size
+			
+			btx.fillStyle = '#000000'
+			btx.fillRect(0,0,size,size)
+			
+			btx.fillStyle = '#ffffff'
+			btx.roundRect( offset,offset, size-offset*2,size-offset*2, radius )
+			btx.fill()
+			
+			return new Uint8Array( btx.getImageData(0,0,size,size).data ) 
+		}
+		
+		const mat4 = glMatrix.mat4
+		const vec3 = glMatrix.vec3
+		const vec4 = glMatrix.vec4
+		const quat = glMatrix.quat
+		
+		
+		const mouse ={
+			
+			x:null,
+			y:null,
+			sx:null,
+			sy:null,
+			dx:0,
+			dy:0,
+			lx:0,
+			ly:0,
+			radius:0,
+			ox:0,
+			oy:0,
+			axis:false,
+			down:false,
+			state:0,
+			update:function(e){
+				
+			
+				if(e.touches && e.touches.length !== 1) return false
+			
+				var rect = e.target.getBoundingClientRect()
+				
+				var event = e.touches && e.touches.length === 1 ? e.touches[0] : e
+			
+				this.x = (event.clientX - rect.left) 
+				this.y = (event.clientY - rect.top)
+			
+			},
+			reset:function(){
+				
+				this.x = null
+				this.y = null
+				this.sx = null
+				this.sy = null
+				this.dx = 0
+				this.dy = 0
+				this.lx = null
+				this.ly = null
+				this.down = false
+				this.axis = null
+			},
+			onDown:function(){},
+			onUp:function(){},
+			onMove:function(){}
+		}
+		function onDown(e){
+			
+			mouse.update(e)
+			mouse.sx = mouse.x
+			mouse.sy = mouse.y
+			mouse.lx = mouse.x
+			mouse.ly = mouse.y
+			mouse.down = true
+			
+			const d = Math.sqrt( Math.pow( mouse.x - mouse.ox, 2 ) + Math.pow( mouse.y - mouse.oy, 2 ) )
+			
+			if( d > mouse.radius ){
+				
+				mouse.axis = 'z'
+				
+			}else{
+				
+				mouse.axis=null
+			}
+			
+			mouse.onDown()
+		}
+		function onUp(e){
+			
+			mouse.update(e)
+			
+			mouse.dx = mouse.sx - mouse.x
+			mouse.dy = mouse.sy - mouse.y
+			mouse.onUp()
+			mouse.reset()
+		}
+		function onMove(e){
+			
+			if(!mouse.down) return 
+			
+			mouse.update(e)
+			
+			mouse.dx = mouse.sx - mouse.x
+			mouse.dy = mouse.sy - mouse.y
+			
+			mouse.onMove()
+			
+			
+			mouse.lx = mouse.x
+			mouse.ly = mouse.y
+			
+			
+			
+		}
+		
+		//shaders
+		const vs = `#version 300 es
+		
+			in vec3 position;
+			in vec4 color;
+			in vec2 texcoord;
+			
+		
+			uniform mat4 matrix;
+			
+		
+			out vec4 vColor;
+			out vec2 vTexcoord;
+			
+			void main(){
+				
+				gl_Position = matrix * vec4( position , 1.0 );
+				
+				vColor = color;
+				vTexcoord = texcoord;
+			}
+		
+		`;
+		const fs = `#version 300 es
+			
+			precision mediump float;
+			
+		
+			in vec4 vColor;
+			in vec2 vTexcoord;
+			
+			
+			uniform sampler2D edgeTexture;
+			uniform float highlight;
+			out vec4 outColor;
+			
+			void main(){
+				
+				vec4 pixel = texture( edgeTexture, vTexcoord );
+				
+				outColor =   vec4( vColor.rgb * pixel.rgb * highlight, vColor.a) ;
+			}
+		
+		`;
+		
+		//helpers
+		
+		function alpha( cubeIndex, faceIndex ){
+			
+			return ( cubeIndex * 6 + faceIndex + 1 ) / 255
+		}
+		function randomFromArray(a){
+			return a[ ( Math.random()*a.length) | 0 ]
+		}
+		function ease(t) { return t<.5 ? 2*t*t : -1+(4-2*t)*t }
+		function easeOut(t) { return t*(2-t) }
+		function easeIn(t) { return t*t }
+		function easeInStrong(t) { return t*t*t*t*t }
+		function easeOutStrong(t) { return 1+(--t)*t*t*t*t }
+		function easeStrong(t)  { return t<.5 ? 16*t*t*t*t*t : 1+16*(--t)*t*t*t*t }
+		function clamp(num, min, max) {
+			
+			return num < min ? min : (num > max ? max : num);
+		}
+				
+		function main(){
+			
+			const canvas = document.getElementById('canvas')
+			const gl = canvas.getContext('webgl2')
+			
+			if( !gl){
+				return console.log('webgl2 not supported') 
+			}
+			
+		
+			const defaultProgram = glCreateProgram( gl, vs, fs )
+			const defaultLocs = glGetProgramLocations( 
+				gl, 
+				defaultProgram, 
+				[
+				{ attribute:'position',numComponents:3 },
+				{ attribute:'color',numComponents:4 },
+				{ attribute:'texcoord',numComponents:2 }
+				], 
+				['matrix','edgeTexture','highlight']
+			)
+			const rubics = new Rubics()
+		
+			const data = []
+			
+			for(let i=0; i<27;i++){
+				
+				const cube = cubeArrays(0.5) 
+				const colors = rubics.colors[i]
+				cube.color =[]
+				
+				for(let j=0;j<6;j++){
+					
+					const c = colors[j] ? colors[j] : [0.0,0.0,0.0]
+					
+					for(let k=0; k<6; k++){
+						
+						cube.color.push( c[0],c[1],c[2], alpha( i, j ) )
+					}
+				}
+				
+				data.push( cube )
+				
+			}
+			
+			const defaultVAO = glCreateDrawArraysVAO( gl, data , defaultLocs.attributes )
+			const defaultU = defaultLocs.uniforms
+			
+			const cubeTexSize = 128
+			const cubeTexture = glCreateTexture( gl, cubeTexSize, cubeTexSize, textureData(cubeTexSize,8,8), true )
+			
+			
+			glResizeCanvas( gl.canvas )
+			gl.clearColor(0.0, 0.0, 0.0, 0.0);
+			gl.enable(gl.DEPTH_TEST)
+			gl.useProgram( defaultProgram)
+			gl.bindVertexArray( defaultVAO.vao )
+			
+			gl.uniform1i ( defaultU.edgeTexture,  0)
+			gl.activeTexture(gl.TEXTURE0);
+			gl.bindTexture(gl.TEXTURE_2D, cubeTexture )
+			
+			let width = gl.canvas.width
+			let height = gl.canvas.height
+			
+			const cameraPos =   [0,0,12]
+			const target =      [0,0,0]
+			const up =          [0,1,0]
+			
+			let view = mat4.lookAt( [], cameraPos, target, up)
+			let projection = mat4.perspective( [], 0.7, width / height, 0.1, 100.0 )
+		
+			let viewProjection = mat4.multiply( [], projection, view )
+			
+			let invView = mat4.invert( [], view )
+			let invPro = mat4.invert( [], projection )
+		
+			let q = quat.rotateX([], quat.create(), QPI/2)
+			quat.rotateY(q,q, QPI+HPI)
+			
+			let world = mat4.fromQuat([],q)
+			
+			
+			
+			let faceId = false
+			let cubeId =  false
+			let faceIndex = false
+			let normalDir = null
+			let normal = null
+			let dragStart = null
+			let dragEnd = null
+			
+			let t = 0
+			let animate = false
+			let block = null
+			let axis = null
+			let direction = null
+			
+			const normals = [
+				[0,0,1],
+				[1,0,0],
+				[0,0,-1],
+				[-1,0,0],
+				[0,1,0],
+				[0,-1,0]
+			
+			]
+			
+			
+			function drawScene(){
+				
+				glResizeCanvas( gl.canvas )
+				
+				width = gl.canvas.width
+				height = gl.canvas.height
+				
+				mouse.ox = width / 2
+				mouse.oy = height / 2
+				mouse.radius = Math.min( mouse.ox, mouse.oy )
+			
+				
+				gl.viewport(0, 0, width, height)
+				gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+				
+				
+				mat4.perspective( projection, 0.7, width/height, 0.1, 100.0 )
+				
+				mat4.multiply( viewProjection, view, world)
+				mat4.multiply( viewProjection, projection, viewProjection )
+				
+				const e = ease(t)
+			
+				for( let i=0; i < rubics.coords.length; i++ ){
+					
+					const idx = rubics.indexes[ i ]
+					const q = rubics.rotations[ idx ]
+					
+					const trans = mat4.fromRotationTranslation( [], q, rubics.coords[ i ] )
+					
+					//if rotating
+					if( animate && block.indexOf(i) > -1){
+						
+						const rot = mat4.fromRotation([], direction*e*HPI, axis)
+						mat4.multiply( trans, rot, trans)
+					}
+					
+					const m = mat4.multiply( [], viewProjection, trans )
+					
+					gl.uniform1f( defaultU.highlight,   1.0 )
+					gl.uniformMatrix4fv( defaultU.matrix, false, m )
+					
+					gl.drawArrays(
+						gl.TRIANGLES,//primitive type 
+						idx*36,//offset 
+						36//defaultVAO.count
+					)
+				}
+				
+				if( animate && block ) {
+					
+					t += 0.075
+				}
+				
+				if(t > 1){
+					
+					t=0
+				
+					if( animate ){ 
+						
+						rubics.updateTurn(block, axis, direction )
+						animate = false
+						block = null
+						cubeId = false
+					}
+					
+					
+				}
+				
+				
+			}
+			
+			
+			function getAlpha(){
+				
+				const output = new Uint8Array(4)
+				
+				gl.readPixels(
+					Math.floor(mouse.x),
+					gl.canvas.height - Math.floor(mouse.y),
+					1,1,gl.RGBA, gl.UNSIGNED_BYTE, output,0 )
+					
+				return output[3]
+			}
+			
+			function closestAxis(n){
+				
+				var dx = vec3.dot( n, [1,0,0] )
+				var dy = vec3.dot( n, [0,1,0] )
+				var dz = vec3.dot( n, [0,0,1] )
+				
+				let s
+				
+				if( Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= Math.abs(dz) ){
+					
+					s = Math.sign( dx )
+					return {
+						name:'x',
+						axis:[s,0,0],
+						sign: s
+					}
+					
+				}else if( Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) >= Math.abs(dz)){
+					
+					s = Math.sign( dy )
+					return {
+						name:'y',
+						axis:[0,s,0],
+						sign: s
+					}
+					
+				}else{
+					
+					s = Math.sign( dz )
+					return {
+						name:'z',
+						axis:[0,0,s],
+						sign: s
+					}
+				}
+				
+			}
+			function intersectRayPlane( planeN, rayP, rayD, d){
+			
+				var s = (rayD[2] * planeN[2] + rayD[1] * planeN[1] + rayD[0] * planeN[0])
+				
+				if( s === 0) return false 
+				
+				var t = ( d - (rayP[2] * planeN[2] + rayP[1] * planeN[1] + rayP[0] * planeN[0] ) ) / s
+				
+				if( t < 0 ) return false
+				
+				return t
+			}
+			function mouseToRay( mx, my, invProjection, invView ){
+			
+				var x = ( 2 * mx ) / width - 1
+				var y = 1 - ( 2 * my ) / height
+				
+				//obs! vec4
+				var eye = vec4.transformMat4( [], [ x, y, -1, 1], invPro )
+				
+				eye = [ eye[0], eye[1], -1, 0 ]
+				
+				var ray = vec4.transformMat4( [], eye,  invView )
+				
+				return vec3.normalize([],[ ray[0],ray[1], ray[2] ] )
+			}
+			function findBlock( block, id){
+				
+				for( let i = 0; i< 3; i++){
+					
+					const indexes = rubics.getIndexes( block[i] )
+					
+					if( indexes.indexOf( id ) > -1) return block[i]
+					
+				}
+				
+			}
+			
+			mouse.onDown = function(){
+				
+				if(animate) return
+				
+				drawScene()
+				
+				const alpha = getAlpha()
+				
+				if( !alpha){
+					
+					mouse.state = 1
+					return
+				}
+				
+				
+				if( alpha && alpha > 0 ){
+					
+					faceId = alpha - 1
+					cubeId =  ( faceId / 6 ) | 0 
+					faceIndex = faceId - ( cubeId * 6 )
+					
+					//cubie local rotation
+					const rot = rubics.rotations[ cubeId ]
+					
+					//cubie world rotation
+					const wq = quat.multiply( [],q,rot)
+					
+					
+					//clicked face local normal
+					normalDir = closestAxis( vec3.transformQuat( [], normals[ faceIndex ] , rot ) )
+					
+					
+					//clicked face world normal also dragplane normal
+					normal = vec3.transformQuat( [],normals[ faceIndex ] , wq )
+					//vec3.normalize(normal,normal)
+					
+					//update inverted projection
+					mat4.invert( invPro, projection )
+					
+					const ray = mouseToRay( mouse.x, mouse.y, invPro, invView )
+					const t = intersectRayPlane( normal, cameraPos, ray, 0)
+					
+					if(t){
+						//ray intersection on drag plane
+						dragStart = vec3.scale([], ray, t )
+					}
+					
+				}
+				
+			}
+			
+			mouse.onUp = function(){
+				
+				if( mouse.state){
+					mouse.state=0
+					return
+				}
+				
+				if(animate || !dragStart) return
+				
+				const ray2 = mouseToRay( mouse.x, mouse.y, invPro, invView)
+					
+					
+				const t2 = intersectRayPlane( normal, cameraPos, ray2, 0)
+				
+				if( t2 && dragStart ){
+					
+					dragEnd = vec3.scale([], ray2, t2 )
+					
+					
+					//convert to local coords
+					const m = mat4.multiply( [],  mat4.invert([], world) , invView )
+					
+					vec3.transformMat4( dragStart, dragStart, m )
+					vec3.transformMat4( dragEnd, dragEnd, m)
+					
+					const v = vec3.sub([], dragEnd, dragStart )
+					
+					if( vec3.length(v) < 0.2 ){
+						
+						dragStart = null
+						dragEnd = null
+						animate = false
+						return
+					 }
+					 
+					const dir = closestAxis( v )
+					
+					if(normalDir.name == 'x'){
+						
+						if( dir.name == 'y'){
+							
+							block = findBlock( rubics.Z, cubeId )
+							axis = [0,0, -1]
+							direction = -dir.sign*normalDir.sign
+							
+							animate = true
+							
+						}else if( dir.name == 'z'){
+							
+							block = findBlock( rubics.Y, cubeId )
+							axis = [0, 1, 0]
+							direction = -dir.sign*normalDir.sign
+							
+							animate = true
+							
+						}else{
+							
+							animate = false
+						}
+						
+						
+						
+					}else if(normalDir.name == 'y'){
+						
+						if( dir.name == 'x'){
+							
+							block = findBlock( rubics.Z, cubeId )
+							axis = [0,0, -1]
+							direction = dir.sign*normalDir.sign
+							
+							animate = true
+							
+						}else if( dir.name == 'z'){
+							
+							block = findBlock( rubics.X, cubeId )
+							axis = [1, 0, 0]
+							direction = dir.sign*normalDir.sign
+							
+							animate = true
+						}else{
+							animate = false
+						}
+						
+					}else if(normalDir.name == 'z'){
+						
+						if( dir.name == 'y'){
+							
+							block = findBlock( rubics.X, cubeId )
+							axis = [1,0, 0]
+							direction = -dir.sign*normalDir.sign
+							
+							animate = true
+							
+						}else if( dir.name == 'x'){
+							
+							block = findBlock( rubics.Y, cubeId )
+							axis = [0, 1, 0]
+							direction = dir.sign*normalDir.sign
+							
+							animate = true
+						}else{
+							animate = false
+						}
+					}
+					
+					
+					
+				}
+				
+				dragStart = null
+				dragEnd = null
+			}
+			mouse.onMove = function(){
+				
+				
+				if(!mouse.state) return
+				
+				
+				const dx = mouse.x - mouse.lx
+				const dy = mouse.y - mouse.ly
+				const dz = Math.sqrt( dx*dx+dy*dy )
+				
+				const nq = quat.create()
+				
+				if( mouse.axis === 'z'){
+					
+					
+					
+					const perp = [( mouse.y - mouse.oy ), -(mouse.x - mouse.ox), 0]
+					const vec =  [ dx, dy,0]
+					const dot = vec3.dot(vec,perp) 
+				
+				
+					quat.rotateZ(nq,nq,dz*Math.sign( dot )*0.006)
+					
+				}else{
+					
+					if(!mouse.axis){
+						
+						if( dz < 1) return
+						
+						if( Math.abs(dx) < Math.abs(dy) ) mouse.axis='x'
+						else mouse.axis='y'
+					}
+					
+					if( mouse.axis==='x') quat.rotateX(nq,nq,dy*0.006)
+					else quat.rotateY(nq,nq,dx*0.006)
+					
+					
+				}
+				quat.multiply(q,nq,q)
+				world = mat4.fromQuat(world, q)
+				
+				
+			}
+			
+			gl.canvas.addEventListener('mousedown',onDown,false)
+			gl.canvas.addEventListener('mouseup',onUp,false)
+			gl.canvas.addEventListener('mouseleave',onUp,false)
+			gl.canvas.addEventListener('mousemove',onMove,false)
+			
+			if( 'ontouchstart' in window){
+			
+				gl.canvas.addEventListener('touchstart', onDown, false)
+				gl.canvas.addEventListener('touchmove', onMove, false)
+				gl.canvas.addEventListener('touchcancel', onUp, false)
+				gl.canvas.addEventListener('touchend', onUp, false)
+			}
+			
+			
+			//start loop
+			function loop(time){
+				
+				const start = performance.now()
+				drawScene()
+				trace.textContent = (performance.now() - start).toFixed(2)
+				requestAnimationFrame(loop)
+			}
+			
+			requestAnimationFrame(loop)
+		}
+		
+		//gooo!!!
+		main()
+		
+	</script>
+
+	</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
