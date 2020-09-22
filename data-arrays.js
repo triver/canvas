@@ -110,16 +110,87 @@ function cubeArrays(s, color, y){
 	
 	
 	const c = []
-	
-	for(let i=0; i<v.length; i += 3){
+	let count=0
+	for(let i=0; i<v.length; i += 6){
 		
-		c.push( color[0], color[1], color[2])
+		const r = 1.0//Math.random()
+		const g = 0.5//Math.random()
+		const b = 0.0//Math.random()
+		const f = (count/6+0.5)
+		for(let j=0; j<6; j++){
+			
+			c.push( r*f,g*f,b*f )
+		}
+		
+		count++
 	}
 	return {
 		position: v,
 		texcoord: t,
 		color: c,
 		normal: n
+	}
+	
+}
+function cylinderArrays( n,r,h, offset, center){
+	
+	offset = offset || 0
+	
+	const theta = Math.PI*2/n
+	const v0 = []
+	const v1 = []
+	const indices=[]
+	
+	const l = n*2
+	
+	let top, bottom
+	if(center){
+		
+		const hh = h / 2
+		top = hh
+		bottom = -hh
+	}else{
+		top = h
+		bottom = 0
+	}
+	
+	for(let i=0; i<n;i++){
+		
+		const angle = i * theta + offset
+		
+		const x = Math.cos(angle) * r
+		const z = Math.sin(angle) * r
+		
+		v0.push( x, top, z)
+		v1.push( x, bottom, z)
+		
+		const i0 = i
+		const i1 = i + n
+		const i3 = (i + 1) % n
+		const i2 = i3 + n
+		
+		indices.push(
+			i0, i2, i1, 
+			i0, i3, i2,
+			i3,i0,l,
+			i1,i2,l+1
+		)
+	}
+	const v =  v0.concat( v1 )
+	
+	v.push( 0,top,0, 0,bottom, 0)
+	
+	const col=[]
+	
+	for(let i=0;i<v.length-6; i += 3 ){
+		
+		col.push(0.7,0.7,0.7)
+	}
+	col.push(1.0,1.0,1.0,0.0,0.0,0.0)
+	return {
+		position:v,
+		color: col,
+		indices: indices
 	}
 	
 }
