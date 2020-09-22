@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+	<title>Infinite Hexagonal Grid</title>
+	<style>
+		* {
+			-webkit-touch-callout: none; 
+			-webkit-text-size-adjust: none;
+			-webkit-tap-highlight-color: rgba(0,0,0,0); 
+			-webkit-user-select: none;
+			text-size-adjust: none; 
+			touch-callout: none; 
+			user-select: none;
+			tap-highlight-color: rgba(0,0,0,0); 
+		}
+		body {
+		  margin: 0;
+		  font-family: monospace;
+		}
+		#canvas {
+		  display: block;
+		  width: 100vw;
+		  height: 100vh;
+		  background: black;
+		}
+		#crl-canvas {
+		  display: block;
+		  width: 200px;
+		  height: 200px;
+		  background: transparent;
+		  position: fixed;
+		  right:20px;
+		  bottom:20px;
+		  z-index:1;
+		}
+		#trace{
+			position: fixed;
+			left:0;
+			top:0;
+			background: black;
+			width:40px;
+			height: 20px;
+			color: #ccc;
+			padding: 5px;
+			display:none;
+		}
+    </style>
+	<body>
+		
+	<canvas id="canvas"></canvas>
+	<canvas id="crl-canvas"></canvas>
+	<div id="trace"></div>
+	
+	<script src="../gl-matrix.js"></script>
+	<script src="../vec2.js"></script>
+	<script src="../data-arrays.js"></script>
+	<script src="../func-gl.js"></script>
+	<script src="../cameras.js"></script>
+	<script src="simplex.js"></script>
+	<script src="math-util.js"></script>
+	<script src="flat-grid.js"></script>
+	
+	
+	<script>
+		
+		
+		"use strict"
+		
+		
+		
+		const mat4 = glMatrix.mat4
+		const vec3 = glMatrix.vec3
+		const quat = glMatrix.quat
+		
+		let rightDown = false
+		let leftDown = false
+		let upDown = false
+		let downDown = false
+		let zDown = false
+		let xDown = false
+		
+		
+		const canvas = document.getElementById('crl-canvas')
+		
+		
+		const width = 300
+		const height = 300
+		canvas.width=300
+		canvas.height=300
+		const ctx = canvas.getContext('2d')
+		ctx.lineWidth = 5
+		
+		
+		
+		var stick ={
+			origin: new Vec2(150,150),
+			pos: new Vec2(150,150),
+			radius: 50,
+			maxRadius: 100,
+			dir:new Vec2(),
+			active: false,
+			forward:new Vec2(0,1),
+			backward:new Vec2(0,-1),
+			draw: function(ctx){
+				
+				
+				ctx.clearRect(0,0,width,height)
+				if(!this.active){ 
+					
+					this.pos.copy(this.origin)
+					this.dir.multiplyScalar(0.8)
+				}
+				else{
+					 this.dir = this.pos.clone().sub( this.origin )
+					 
+					 if( this.dir.lengthSq() > this.maxRadius*this.maxRadius){
+						 this.dir.clampLength( this.maxRadius )
+					 }
+				 }
+				var pos = this.origin.clone().add( this.dir)
+				ctx.fillStyle = 'orange'
+				ctx.strokeStyle = 'orange'
+				
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.beginPath()
+				ctx.arc(this.origin.x, this.origin.y,this.radius,0,Math.PI*2)
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.lineTo( pos.x, pos.y)
+				ctx.stroke()
+				/*
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.beginPath()
+				ctx.arc(this.origin.x, this.origin.y,this.maxRadius,0,Math.PI*2)
+				ctx.stroke()
+				*/
+				
+				
+				ctx.moveTo( pos.x, pos.y)
+				ctx.beginPath()
+				ctx.arc(pos.x, pos.y,this.radius,0,Math.PI*2)
+				ctx.fill()
+			}
+		}
+	
+		var mouse = {
+			
+			
+			pos: new Vec2(),
+			lastPos: new Vec2(),
+			startPos:new Vec2(),
+			delta: new Vec2(),
+			direction: new Vec2(),
+			down: false,
+			target: null,
+			targetOffset: new Vec2(),
+			targetActive: false,
+			update: function(e,w){
+				
+				if(e.touches && e.touches.length !== 1) return false
+			
+				var rect = e.target.getBoundingClientRect()
+				
+				var event = e.touches && e.touches.length === 1 ? e.touches[0] : e;
+				
+				var scale =  w / rect.width
+				
+				var x = ( event.clientX - rect.left ) * scale 
+				var y = ( event.clientY - rect.top ) * scale
+				
+				this.pos.set( x,y)
+				
+			}
+		}
+		mouse.target = stick
+		
+		
+		const simplex = new SimplexNoise()
+		
+		
+		
+		const vs = `#version 300 es
+		
+			in vec3 position;
+			in vec3 color;
+		
+			uniform mat4 matrix;
+			uniform mat4 modelMatrix;
+			
+			flat out vec3 vColor;
+			out vec3 vViewPos;
+			
+			void main(){
+				
+				gl_Position = matrix * vec4( position , 1.0 );
+				
+				vColor=color;
+				vViewPos = ( modelMatrix * vec4( position, 1.0 ) ).xyz;
+				
+			}
+		
+		`;
+		const fs = `#version 300 es
+			
+			precision mediump float;
+			
+			in vec3 vViewPos;
+			flat in vec3 vColor;
+			
+		
+			out vec4 outColor;
+			
+			void main(){
+				
+				vec3 xTangent = dFdx( vViewPos );
+				vec3 yTangent = dFdy( vViewPos );
+				vec3 normal = normalize( cross( xTangent, yTangent ) );
+			
+			float l =  max(0.2, dot( normalize( vec3(1.0,1.0,1.0)), normal )) + 0.35 ;
+				
+				float fogAmount = smoothstep( 0.8, 2.6, -vViewPos.z );
+				
+				outColor =  mix(  vec4( vColor*l,1.0) , vec4( 0.0, 0.7, 0.8, 1.0), fogAmount );
+			}
+		
+		`;
+		
+		
+		function main(){
+			
+			const glCanvas = document.getElementById('canvas')
+			const gl = glCanvas.getContext('webgl2')
+			
+			if( !gl){
+				return console.log('webgl2 not supported') 
+			}
+			
+			//GRID
+			
+			const gridProgram = glCreateProgram( gl, vs, fs )
+			
+			const gridLocs = glGetProgramLocations( 
+				gl, 
+				gridProgram, 
+				[
+				{ attribute:'position',numComponents:3 },
+				{ attribute:'color',numComponents:3 }
+				], 
+				['matrix','modelMatrix']
+			)
+			
+			const gridRadius =4
+			const gridTextureSize = 16
+			
+			const grid = new FlatGrid(gridRadius,2, true)
+			
+			const gridVAO = glCreateDrawElementsVAO( gl, [ grid.mesh ], gridLocs.attributes )
+			const gridU = gridLocs.uniforms
+			
+			const cylinderData = cylinderArrays( 6, grid.size, 0.05, 0)
+			const cylVAO = glCreateDrawElementsVAO( gl, [ cylinderData ], gridLocs.attributes )
+			
+			
+			const camera = lookAtCamera()
+			camera.setPhi( 0.2)
+			camera.setDistance( 0.4)
+			camera.updateStatic()
+			
+			let cylinders =[]
+			
+			function genData(offset){
+				
+				cylinders=[]
+				
+				for(let i=0; i<grid.centers.length; i++){
+					
+					const c = vec3.add([], grid.centers[i], offset)
+					
+					for(let j=0; j< grid.hexes.length;j++){
+						
+						const x = grid.hexes[j].point[0] + c[0]
+						const y = grid.hexes[j].point[1] + c[2]
+						
+						if( simplex.noise( x,y) < -0.7){
+							
+							cylinders.push([x,0,y])
+						}
+						
+					}
+					
+				}
+			}
+			
+			const player = {
+				
+				pos: [0,0,0],
+				lastPos: [0,0,0],
+				dir:[0,0,-1],
+				matrix: mat4.create(),
+				rotation: quat.create(),
+				hex:null,
+				gridOffset: [0,0,0],
+				gridIndex:0,
+				angle:0,
+				update:function(grid){
+					
+					mat4.fromRotationTranslation( this.matrix, this.rotation, this.pos )
+				},
+				rotate: function(v){
+					this.angle += v
+					quat.rotateY( this.rotation, this.rotation, v)
+					
+				},
+				move: function(v){
+					
+					const curDist = dist3(this.gridOffset, this.pos )
+					
+					if( curDist > grid.worldRadiusSq ){
+						
+						let c = vec3.add([], grid.centers[0], this.gridOffset )
+						let d = dist3( this.pos, c)
+						let closest = vec3.clone( c )
+						let idx = 0
+				
+						for(let i=1;i< grid.centers.length;i++){
+						
+							vec3.add(c,grid.centers[i],this.gridOffset)
+							const dd = dist3( this.pos, c)
+							
+							if(dd < d){
+								d=dd
+								vec3.copy(closest,c)
+								idx = i
+							}
+						}
+						if( idx !== this.gridIndex){
+							
+							vec3.copy( this.gridOffset, closest )
+							this.gridIndex = idx
+							genData(this.gridOffset)
+							
+						}	
+						
+						
+					}
+					
+					/*
+					const hex = grid.getHexAtPoint( this.pos[0] - this.gridOffset[0], this.pos[2]- this.gridOffset[2] )
+					
+					if(hex) this.hex=hex
+					else this.hex=null
+					*/
+					vec3.copy( this.lastPos, this.pos)
+					vec3.scaleAndAdd( this.pos, this.pos, vec3.transformQuat( [], this.dir, this.rotation ), v )
+				}
+			}
+			genData(player.gridOffset)
+			
+			
+			const speed = 0.02
+			
+			gl.clearColor(0.0, 0.7, 0.8, 1.0);
+			gl.enable(gl.DEPTH_TEST)
+			gl.enable(gl.CULL_FACE)
+			gl.useProgram( gridProgram)
+			
+			function drawScene(){
+				
+				glResizeCanvas( gl.canvas )
+				
+				let needsUpdate = false
+				//update camera
+			
+				if( leftDown ){
+					player.rotate(speed*2 )
+					needsUpdate = true
+				}
+				else if( rightDown ){
+					player.rotate(-speed*2 )
+					needsUpdate = true
+				}
+				
+				if( upDown ){
+					
+					player.move(-speed )
+					needsUpdate = true
+				}
+				else if( downDown ){
+					player.move(speed )
+					needsUpdate = true
+				}
+				
+				if( zDown ){
+					camera.lambda += 0.02
+					needsUpdate = true
+					
+				}
+				else if( xDown ){
+					camera.lambda -= 0.02
+					needsUpdate = true
+				}
+				
+				
+				if(stick.active){
+					player.rotate(-stick.dir.x*0.0005 )
+					player.move(stick.dir.y*0.0003 )
+				}
+				if( needsUpdate || stick.active){
+					
+					player.update(grid)
+					camera.updateDynamic([player.pos[0],0,player.pos[2]], player.angle )
+				}
+				
+				gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
+				gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+				
+				
+				gl.bindVertexArray( gridVAO.vao )
+				
+				const matrix = mat4.create()
+				const aspect = gl.canvas.width / gl.canvas.height
+				const projection = mat4.perspective( [], 0.78, aspect, 0.01, 1000.0 )
+				mat4.multiply( matrix, projection,camera.matrix)
+		
+				
+				for(let i=0; i<7;i++){
+					
+					
+					const v = vec3.add([], grid.centers[i], player.gridOffset)
+					const trans = mat4.fromTranslation( [], v )
+					
+					gl.uniformMatrix4fv( gridU.matrix, false, mat4.multiply([],matrix,trans) )
+					gl.uniformMatrix4fv( gridU.modelMatrix, false, mat4.multiply([],camera.matrix,trans) )
+					
+					
+					gl.drawElements(
+						gl.TRIANGLES,//primitive type 
+						gridVAO.count,//count
+						gl.UNSIGNED_SHORT,//type
+						0//offset 
+						
+					)
+				}
+				
+				if(cylinders.length){
+					
+					gl.bindVertexArray( cylVAO.vao )
+					
+					const n = vec3.transformQuat( [], player.dir, player.rotation )
+					
+					for(let i=0; i<cylinders.length;i++){
+						
+						const n2 = vec3.sub([],cylinders[i],player.pos)
+						if( vec3.squaredLength(n2) > 1 && vec3.dot(n,n2) > -0.5) continue
+						
+						const t = mat4.fromTranslation([],cylinders[i])
+					
+						gl.uniformMatrix4fv( gridU.matrix, false, mat4.multiply ([], matrix, t ) )
+						gl.uniformMatrix4fv( gridU.modelMatrix, false, mat4.multiply ([], camera.matrix, t ) )
+						gl.drawElements(
+							gl.TRIANGLES,//primitive type 
+							cylVAO.count,//count
+							gl.UNSIGNED_SHORT,//type
+							0//offset 
+							
+						)
+					}
+				}
+				
+				
+				stick.draw(ctx)
+				
+			}
+			
+			function loop(time){
+				
+				//const start = performance.now()
+				drawScene()
+				//trace.textContent = (performance.now() - start).toFixed(2)
+				requestAnimationFrame(loop)
+			}
+			requestAnimationFrame(loop)
+		}
+		
+		//mouse
+		function onDown(e){
+			
+			mouse.update( e, width )
+			
+			
+			
+			mouse.delta.zero()
+			mouse.direction.zero()
+			
+			mouse.lastPos.copy( mouse.pos )
+			mouse.startPos.copy( mouse.pos )
+			
+			mouse.down = true
+			
+			if( mouse.target ){
+				
+				var offset = mouse.target.pos.clone().sub( mouse.pos )
+				
+				mouse.targetOffset.copy( offset )
+				
+				if(offset.length() < mouse.target.radius){
+					 mouse.targetActive = true
+					 mouse.target.active = true
+				 }
+				
+			}
+		}
+		function onUp(e){
+			
+			mouse.down = false
+			
+			
+			mouse.delta.zero()
+			mouse.direction.zero()
+			mouse.targetOffset.zero()
+			mouse.targetActive=false
+			mouse.target.active = false
+			
+		}
+		function onMove(e){
+			
+			mouse.update( e, width )
+			
+			if(mouse.down){
+				
+				var delta = mouse.pos.clone().sub( mouse.lastPos )
+				
+				mouse.direction = mouse.pos.clone().sub( mouse.startPos )
+				
+				
+				if(delta.lengthSq() > 25){
+					
+					mouse.delta = delta
+					mouse.lastPos.copy( mouse.pos )
+				}
+				
+				if(mouse.target && mouse.targetActive){
+					
+					mouse.target.pos.copy( mouse.pos.clone().add( mouse.targetOffset) )
+					
+				}
+			}
+		}
+		
+		
+		canvas.addEventListener('mousedown',onDown,false)
+		canvas.addEventListener('mouseup',onUp,false)
+		canvas.addEventListener('mousemove',onMove,false)
+		canvas.addEventListener('mouseleave',onUp,false)
+		
+		if( 'ontouchstart' in window){
+			
+			canvas.addEventListener('touchstart', onDown, false)
+			canvas.addEventListener('touchmove', onMove, false)
+			canvas.addEventListener('touchcancel', onUp, false)
+			canvas.addEventListener('touchend', onUp, false)
+		}
+		//bind keys
+			
+		function onKeyDown(e) {
+		
+			if(e.keyCode == 39 || e.keyCode == 68 ) {
+				rightDown = true
+			}
+			else if(e.keyCode == 37 || e.keyCode == 65 ) {
+				
+				leftDown = true
+				
+			}
+			if(e.keyCode == 40  || e.keyCode == 83 ) {
+				downDown = true
+				
+			}
+			else if(e.keyCode == 38 || e.keyCode == 87  ) {
+				upDown = true
+			}
+			
+			if(e.keyCode == 90 ) {
+				zDown = true
+				
+			}
+			else if(e.keyCode == 88) {
+				xDown = true
+			}
+		}
+		function onKeyUp(e) {
+			
+			if(e.keyCode == 39 || e.keyCode == 68) {
+				rightDown = false
+			}
+			else if(e.keyCode == 37 || e.keyCode == 65) {
+				leftDown = false
+			}
+			if(e.keyCode == 40 || e.keyCode == 83) {
+				downDown = false
+			}
+			else if(e.keyCode == 38 || e.keyCode == 87) {
+				upDown = false
+			}
+			if(e.keyCode == 90 ) {
+				zDown = false
+				
+			}
+			else if(e.keyCode == 88) {
+				xDown = false
+			}
+		}
+		
+		document.addEventListener('keydown', onKeyDown, false)
+		document.addEventListener('keyup', onKeyUp, false)
+		
+		main()
+		
+	</script>
+
+	</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
