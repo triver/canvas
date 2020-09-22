@@ -1107,13 +1107,4 @@ global.Geometry = {
 
 
 
-
-
-
-
-
-
-
-
-
 })(this);

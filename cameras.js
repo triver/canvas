@@ -1,5 +1,7 @@
 function lookAtCamera( ){
+	
 	const HALF_PI = Math.PI/2
+	
 	const camera = {
 		lambda: 0,
 		phi: 0,
@@ -51,9 +53,11 @@ function lookAtCamera( ){
 	
 	return camera
 }
+
+
 function freeTarget( mSpeed, rSpeed, h ){
 
-const target = {
+	const target = {
 	
 	position: vec3.fromValues( 0, 0, 0),
 	matrix: mat4.create(),

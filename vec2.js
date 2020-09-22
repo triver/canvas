@@ -6,6 +6,7 @@ function Vec2(x,y){
 }
 
 Vec2.prototype = {
+	
 	set:function( x, y ){
 		
 		this.x = x || 0
@@ -23,9 +24,11 @@ Vec2.prototype = {
 		
 	},
 	clone: function(){
+		
 		return new Vec2( this.x, this.y );
 	},
 	copy: function( v){
+		
 		this.x = v.x;
 		this.y = v.y;
 		return this;
@@ -53,19 +56,23 @@ Vec2.prototype = {
 		return this;
 	},
 	subVectors: function( v0, v1 ){
+		
 		this.x = v0.x - v1.x;
 		this.y = v0.y - v1.y;
 		return this;
 	},
 	subScalar: function( s ){
+		
 		this.x -= s;
 		this.y -= s;
 		return this;
 	},
 	length: function(){
+		
 		return Math.sqrt( this.x*this.x + this.y*this.y);
 	},
 	lengthSq: function(){
+		
 		return this.x*this.x + this.y*this.y;
 	},
 	multiplyScalar: function(s){
