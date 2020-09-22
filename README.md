@@ -1,2 +1,0 @@
-# canvas
-various canvas demos
