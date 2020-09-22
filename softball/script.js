@@ -629,7 +629,7 @@ var rig ={
 }
 
 var grid = createGridFaces(12,3)
-console.log(grid.faces.length)
+
 var edges = extractEdges( grid.faces)
 
 var camera = lookAtCamera()
