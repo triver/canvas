@@ -5,7 +5,7 @@ function powerOf2(v) {
 function glCompileShader(gl, shaderSource, shaderType) {
 			
 	// Create the shader object
-	const shader = gl.createShader(shaderType)
+	var shader = gl.createShader(shaderType)
 
 	// Set the shader source code.
 	gl.shaderSource(shader, shaderSource)
@@ -14,13 +14,13 @@ function glCompileShader(gl, shaderSource, shaderType) {
 	gl.compileShader(shader)
 
 	// Check if it compiled
-	const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS)
+	var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS)
 	
 	if (!success) {
 		
 		gl.deleteShader(shader)
 		// Something went wrong during compilation; get the error
-		throw "could not compile shader:"+shaderSource+" " + gl.getShaderInfoLog(shader)
+		throw "could not compile shader:" + gl.getShaderInfoLog(shader)
 		
 	}
 
@@ -31,7 +31,7 @@ function glCreateProgram(gl, vs,fs ) {
 	const vertexShader = glCompileShader( gl, vs, gl.VERTEX_SHADER )
 	const fragmentShader = glCompileShader( gl, fs, gl.FRAGMENT_SHADER )
 	// create a program.
-	const program = gl.createProgram();
+	var program = gl.createProgram();
 
 	// attach the shaders.
 	gl.attachShader(program, vertexShader);
@@ -41,7 +41,7 @@ function glCreateProgram(gl, vs,fs ) {
 	gl.linkProgram(program);
 
 	// Check if it linked.
-	const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+	var success = gl.getProgramParameter(program, gl.LINK_STATUS);
 	if (!success) {
 	  // something went wrong with the link
 	  throw ("program filed to link:" + gl.getProgramInfoLog (program));
@@ -207,9 +207,7 @@ function glCreateDrawArraysVAO( gl, data, location ){
 }
 function glCreateDrawElementsVAO( gl, data, location ){
 	
-	
-	
-	//vertex array object
+
 	const vao = gl.createVertexArray()
 	gl.bindVertexArray(vao)
 	
@@ -220,94 +218,93 @@ function glCreateDrawElementsVAO( gl, data, location ){
 		elements:[],
 		count:0
 	}
+	const attrib ={ indices: [] }
 	
-	
-	const position = []
-	const index = []
-	const texcoord = []
-	
-	
+	for( const p  in location ){
+		attrib[p] = []
+	}
+
 	for(let i=0; i<data.length;i++){
 		
+		if( !data[i].hasOwnProperty('indices') ){
+			console.log('missing indices')
+			continue
+		}
+		
 		const offset = out.count
+		
 		const len = data[i].indices.length
-		
-		position.push.apply( position, data[i].position )
-		index.push.apply(    index,    data[i].indices  )
-		texcoord.push.apply( texcoord, data[i].texcoord )
-		
 		out.count += len
 		out.elements.push({
 			id: i,
 			offset: offset,
 			count: len
 		})
+	
+		for(const p in attrib){
+			
+			
+			attrib[p].push.apply( attrib[p], data[i][p] )
+			
+		}
+		
+		
+		
 		
 	}
 	
-	//positions
+	for( const p in attrib){
+		
+		const buffer = gl.createBuffer()
+		const a = attrib[p]
 	
-	const positionBuffer = gl.createBuffer()
-	
-	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer)
+		
+		
+		if(p==='indices'){
+			
+			
+			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer )
 
-	gl.bufferData(
-		gl.ARRAY_BUFFER, 
-		new Float32Array( position ), 
-		gl.STATIC_DRAW
-	)
+			gl.bufferData(
+				gl.ELEMENT_ARRAY_BUFFER, 
+				new Uint16Array( a ), 
+				gl.STATIC_DRAW
+			)
+					
+			
+		}else{
+			
+			gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+			
+			gl.bufferData(
+				gl.ARRAY_BUFFER, 
+				new Float32Array( a ), 
+				gl.STATIC_DRAW
+			)
+			
+			
+			gl.enableVertexAttribArray(location[p].location)
+			gl.vertexAttribPointer(
+				location[p].location, //location 
+				location[p].numComponents,//num components 
+				gl.FLOAT,//component type 
+				false,//normalize 
+				0,//stride 
+				0//offset
+			)
+		}
+		
+	}
 	
-	
-	gl.enableVertexAttribArray(location.position.location)
-	gl.vertexAttribPointer(
-		location.position.location, //location 
-		3,//num components 
-		gl.FLOAT,//component type 
-		false,//normalize 
-		0,//stride 
-		0//offset
-	)
-	
-	
-	//indices
-	const indexBuffer = gl.createBuffer()
-	
-	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer)
-
-	gl.bufferData(
-		gl.ELEMENT_ARRAY_BUFFER, 
-		new Uint16Array( index ), 
-		gl.STATIC_DRAW
-	)
-	
-	
-	
-	//texcoords
-	const texcoordBuffer = gl.createBuffer()
-	
-	gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer)
-
-	gl.bufferData(
-		gl.ARRAY_BUFFER, 
-		new Float32Array( texcoord ), 
-		gl.STATIC_DRAW
-	)
-	
-	gl.enableVertexAttribArray( location.texcoord.location )
-	gl.vertexAttribPointer(
-		location.texcoord.location, //location 
-		2,//num components 
-		gl.FLOAT,//component type 
-		false,//normalize 
-		0,//stride 
-		0//offset
-	)
-	
+	gl.bindVertexArray(null)
+	gl.enableVertexAttribArray(null)
+	delete out.indices
 	
 	return out		
 	
 	
 }
+
 function glGetProgramLocations( gl, program, attributes, uniforms){
 	
 	const locs = {
