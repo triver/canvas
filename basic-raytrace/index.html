@@ -1,0 +1,408 @@
+<DOCTYPE html>
+<html lang="en" >
+<head>
+	<meta charset="utf-8">
+	<title>Raytrace</title>
+	<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
+	<style>
+	html,body{
+		margin:0;
+		padding:0;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+	}
+	body{ 
+		background: slategray;
+	}
+	#canvas{
+		position: absolute;
+		left:50%;
+		right:0;
+		top:50%;
+		bottom:0;
+		transform: translate(-50%,-50%);
+		display: block;
+		max-width: 100%;
+		max-height: 100%;
+		outline: 1px solid #555;
+		background: black;
+	}
+	</style>
+</head>
+<body>
+	
+	<canvas id="canvas" ></canvas> 
+	
+	<script src="math.js" ></script>
+	
+	
+	
+	<script>
+		
+		var width = 640
+		var height = 640
+		var cx = width/2
+		var cy=height/2
+		
+		var canvas = document.getElementById('canvas')
+		var ctx = canvas.getContext('2d')
+		
+		canvas.width=width
+		canvas.height=height
+		
+		ctx.strokeStyle='orange'
+		ctx.fillStyle = 'orange'
+		ctx.lineWidth=2
+		ctx.lineJoin ='round'
+	
+		function clamp(num, min, max) {
+			return num < min ? min : (num > max ? max : num);
+		}
+		function shadeRGB(color, percent) {
+			var t=percent<0?0:255,
+				p=percent<0?percent*-1:percent,
+				R=color[0],
+				G=color[1],
+				B=color[2];
+			return [ Math.round((t-R)*p)+R,Math.round((t-G)*p)+G, Math.round((t-B)*p)+B ];
+		}
+		function clockwise(points) {
+			
+			var a = 0;
+			var i, j = 0;
+			for (i = 0; i < points.length; i++) {
+				j = i + 1;
+				if (j == points.length) j = 0;
+				a += points[i].x * points[j].y - points[i].y * points[j].x;
+			}
+			return a > 0;
+		}
+		function quadArrays(){
+		
+			var v =[
+				[-0.5, -0.5, 0],
+				[-0.5, 0.5, 0],
+				[ 0.5, 0.5, 0],
+				[ 0.5, -0.5, 0]
+				
+			]
+			var f = [
+				[0,1,2],
+				[0,2,3]
+			]
+			
+			return [v,f]
+		}
+		function checker(size, res, color1, color2 ){
+			
+			color1 = color1 || [30,50,80]
+			color2 = color2 || [255,255,240]
+		
+			var c = new Uint8Array( size*size * 4 )
+			
+			var w = size / res | 0
+			
+			var flag = 0
+			
+			for(var i=0; i < size; i += w){
+				for(var j=0; j < size; j += w){
+					
+					var col = flag ? color1 : color2
+					for( var k =0; k < w;k++){
+						for(var q =0; q < w; q++){
+							
+							var idx = ( (j + q) + ( i + k) * size ) * 4
+							
+							c[idx] = col[0]
+							c[idx + 1] = col[1]
+							c[idx + 2] = col[2]
+							c[idx + 3] = 255
+							
+						}
+					}
+					
+					flag = 1 - flag
+					
+				}
+				flag = 1 - flag
+			}
+			
+			return c
+			
+		}
+		
+		//Möller–Trumbore intersection
+		
+		var epsilon = 0.0000001
+		
+		var invEpsilon = 1 / epsilon
+		
+		function rayTriangleIntersect( rayPos, rayDir, v0,v1,v2, cull){
+
+			var edge1 = new Vector3().subVectors( v1,v0)
+			var edge2 = new Vector3().subVectors( v2,v0)
+			
+			var h = new Vector3().crossVectors( rayDir, edge2)
+			var a = edge1.dot( h )
+			
+			if( cull ){
+				if(a < epsilon ) return false
+			}
+			
+			else{
+				
+				 if(a > -epsilon && a < epsilon) return false // ray is paralell
+			 }
+			
+			var f = 1.0/ a
+			var s = new Vector3().subVectors( rayPos, v0 )
+			var u = f * s.dot( h )
+			
+			if(u<0 || u > 1) return false
+			
+			var q = new Vector3().crossVectors( s, edge1 )
+			var v = f * rayDir.dot( q )
+			
+			if( v < 0 || u + v > 1.0 ) return false
+			
+			var t = f * edge2.dot( q )
+			
+			if( t < epsilon || t > invEpsilon){
+			
+				return  false
+			
+			}
+			
+			return [ t, u, v, 1 - u - v]
+
+		}
+		
+		function makeTri(){
+			
+			return {
+				v : [ new Vector3(-0.5, -0.5, 0), new Vector3( 0.5, -0.5, 0), new Vector3( -0.5, 0.5, 0 )],
+				v0: new Vector3(-1, -1, 0), 
+				v1: new Vector3( 1, -1, 0), 
+				v2:new Vector3( 0,  1, 0 ),
+				normal:new Vector3(0,0,1),
+				position: new Vector3(),
+				rotation: new Euler(),
+				scale: new Vector3(1,1,1),
+				update:function(){
+					
+					var r = new Matrix4().makeRotationFromEuler( this.rotation )
+					var t = new Matrix4().makeTranslation( this.position.x, this.position.y,this.position.z)
+					
+					var m = t.multiply(r).scale( this.scale )
+					
+					this.v0 = this.v[0].clone().applyMatrix4( m )
+					this.v1 = this.v[1].clone().applyMatrix4( m )
+					this.v2 = this.v[2].clone().applyMatrix4( m )
+					
+					this.normal = new Vector3().crossVectors( 
+						this.v0.clone().sub( this.v1),
+						this.v2.clone().sub( this.v1)).normalize()
+					
+				}
+			}
+		}
+		function getDirs( w, h, aspect, scale){
+			
+			var out = []
+			
+			for( var j = 0 ; j < h; j++ ){
+				
+				var row=[]
+				
+				for(var i = 0; i < w; i++){
+					
+					var x = (2 * (i + 0.5) / w - 1) * aspect * scale
+					var y = ( 1 - 2 * (j+0.5) / h ) * scale
+					
+					var dir = new Vector3( x, y, -1).normalize()
+					
+					row.push( dir )
+					
+				}
+				
+				out.push( row )
+			}
+			
+			return out
+		}
+		
+		
+		var tri1 = makeTri()
+		tri1.position.z = -5
+		tri1.scale = new Vector3(2,2,2)
+		tri1.update()
+		
+		var tri2= makeTri()
+		tri2.position.z = -5
+		tri2.position.x = 0.7
+		tri2.position.y = 1
+		tri2.scale = new Vector3(2,2,2)
+		tri2.update()
+		
+		var tri3= makeTri()
+		tri3.position.z = -12
+		tri3.position.x = -0.5
+		tri3.scale = new Vector3(12,12,12)
+		tri3.rotation.x = -0.8
+		tri3.update()
+		
+		
+	
+		var fov = 0.89919363063
+		var scale = Math.tan( fov * 0.5 )
+		var aspect = width / height
+		var orig = new Vector3()
+
+		
+		var euler = new Euler( 0,0.02,0)
+		var tris = [tri1, tri2, tri3]
+		var light = new Vector3( 1.5, 2, -0.5)
+		var res = 10
+		var angle =0
+	
+		var dirs = getDirs( width, height,  aspect, scale )
+	
+		var texSize = 16
+		var tex0 = checker(texSize, 4,[0,128,0],[255,128,0])
+		var tex1 = checker(texSize, 4,[0,128,255],[0,0,255])
+		var tex2 = checker(texSize, 8,[100,100,100],[150,150,150])
+		var texes =[tex0,tex1,tex2]
+		var texcoords = [ [0,1], [1,1], [ 0, 0] ]
+		
+		
+		function draw(){
+			
+			ctx.clearRect(0,0,width,height)
+			
+			tri2.position.z = -5 + Math.sin(angle)* 2.5
+			tri2.position.x = Math.cos(angle) * 2.5
+			tri2.rotation.z = angle
+			tri2.update()
+			
+			tri1.rotation.z = -angle*0.8
+			tri1.update()
+			angle += 0.03
+			
+			
+		
+			for( var j = 0 ; j < height; j += res ){
+				for(var i = 0; i < width; i += res){
+					
+					//var x = (2 * (i + 0.5) / w - 1) * aspect * scale
+					//var y = ( 1 - 2 * (j+0.5) / h ) * scale
+					
+					var dir = dirs[j][i]//new Vector3(x,y,-1).normalize()
+					
+					//trace
+					var t = Infinity
+					var u,v,w;
+					var index = 0
+					var drawPixel = false
+					
+					for(var k =0; k< tris.length;k++){
+						
+						var tri = tris[k]
+						var intersect = rayTriangleIntersect( orig, dir, tri.v0, tri.v1, tri.v2, true)
+					
+						if( intersect && intersect[0] < t ){
+							
+							index = k
+							
+							t = intersect[0]
+							u = intersect[3]
+							v = intersect[1]
+							w = intersect[2]
+							
+							drawPixel |= true
+							
+						}
+						
+					}
+					
+					if(drawPixel){
+						
+						//shadow
+						
+						var inShadow = false
+						
+						var pos = dir.clone().multiplyScalar(t)
+						var pDir = light.clone().sub( pos).normalize()
+						
+						for(var n =0; n < tris.length; n++){
+							
+							if( n !== index ){
+								
+								var tri = tris[n]
+								
+								if( rayTriangleIntersect( pos, pDir, tri.v0, tri.v1, tri.v2 ) ){
+									
+									inShadow = true
+									break
+								}
+								
+							}
+						}
+						
+						//texel
+						
+						var tx = texcoords[0][0] * u + texcoords[1][0]*v + texcoords[2][0]*w
+						var ty = texcoords[0][1] * u + texcoords[1][1]*v + texcoords[2][1]*w
+						
+						
+						var px = Math.round(tx * (texSize-1) )
+						var py = Math.round(ty * (texSize-1) )
+						
+						var idx = (px + py*texSize ) << 2
+						
+						var tex = texes[index]	
+						var col = [ tex[idx], tex[idx+1], tex[idx+2] ]
+						
+						var normal = tris[index].normal
+						var l = Math.max(0, normal.dot( pDir.clone().negate()) ) 
+							
+						var shade = shadeRGB( col, Math.pow(l,4)*0.5 - 0.1)
+						shade =  inShadow ? shadeRGB( shade,-0.6) : shade
+						
+						ctx.fillStyle = 'rgb('+shade[0]+','+shade[1]+','+shade[2]+')'
+						ctx.fillRect(i,j,res,res)
+						
+						
+					}
+					
+				}
+			}
+			
+			
+		
+			
+		}
+		
+		function loop(){
+			
+			requestAnimationFrame(loop)
+			draw()
+		}
+	
+		
+		requestAnimationFrame(loop)
+	
+	
+		
+	</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
