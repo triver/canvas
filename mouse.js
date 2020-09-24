@@ -57,7 +57,9 @@ const mouse ={
 	onMove:function(){},
 	onDragX:function(){},
 	onDragY:function(){},
-	onDragZ:function(){}
+	onDragZ:function(){},
+	onClick:function(){},
+	onWheel:function(){}
 }
 function onDown(e){
 	
@@ -87,6 +89,11 @@ function onUp(e){
 	
 	mouse.dx = mouse.sx - mouse.x
 	mouse.dy = mouse.sy - mouse.y
+	
+	if(Math.abs( mouse.dx ) < 2 && Math.abs( mouse.dy ) < 2){
+		
+		mouse.onClick( mouse.x, mouse.y, mouse.dx, mouse.dy )
+	}
 	mouse.onUp()
 	mouse.reset()
 }
@@ -101,6 +108,10 @@ function onMove(e){
 	mouse.dx = mouse.sx - mouse.x
 	mouse.dy = mouse.sy - mouse.y
 	
+	if(Math.abs( mouse.dx ) < 2 && Math.abs( mouse.dy ) < 2){
+		
+		return
+	}
 	
 	const dx = mouse.x - mouse.lx
 	const dy = mouse.y - mouse.ly
@@ -121,13 +132,13 @@ function onMove(e){
 			
 			if( dz > 2){
 			
-				if( Math.abs(dx) < Math.abs(dy) ) mouse.axis='x'
+				if( Math.abs(dx) > Math.abs(dy) ) mouse.axis='x'
 				else mouse.axis='y'
 			}
 		}
 		
-		if( mouse.axis==='x') mouse.onDragX( dy)
-		else if( mouse.axis ==='y') mouse.onDragY( dx)
+		if( mouse.axis==='x') mouse.onDragX( dx)
+		else if( mouse.axis ==='y') mouse.onDragY( dy)
 		
 		
 	}
@@ -140,14 +151,26 @@ function onMove(e){
 	
 	
 }
+function onWheel(e){
+	e.preventDefault()
+	mouse.onWheel( Math.sign( e.deltaY ) ) 
+}
 function resize( element){
 	mouse.ox = element.width / 2
 	mouse.oy = element.height / 2
 	mouse.radius = Math.min( mouse.ox,mouse.oy )
 }
 
+let mouseCreated = false
 
 global.Mouse = function(element,width){
+	
+	if(mouseCreated){
+		 throw 'Mouse alredy exists' 
+		 return
+	 }
+	
+	mouseCreated = true
 	
 	fixedWidth = width
 	
@@ -159,6 +182,8 @@ global.Mouse = function(element,width){
 	element.addEventListener('mouseup',onUp,false)
 	element.addEventListener('mouseleave',onUp,false)
 	element.addEventListener('mousemove',onMove,false)
+	element.addEventListener('wheel',onWheel,false)
+	
 	
 
 	if( 'ontouchstart' in window){
