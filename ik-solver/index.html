@@ -1,0 +1,316 @@
+<DOCTYPE html>
+<html lang="en" >
+<head>
+	<meta charset="utf-8">
+	<title>IK Solver</title>
+	<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
+	<style>
+	html,body{
+		margin:0;
+		padding:0;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+	}
+	body{ 
+		background: black;
+	}
+	#canvas{
+		position: absolute;
+		left:50%;
+		right:0;
+		top:50%;
+		bottom:0;
+		transform: translate(-50%,-50%);
+		display: block;
+		max-width: 100%;
+		max-height: 100%;
+		box-sizing: border-box;
+		background: black;
+	}
+	</style>
+</head>
+<body>
+	
+	<canvas id="canvas" ></canvas> 
+	<div id="trace"></div>
+	
+	
+
+	<script src="../gl-matrix.js" ></script>
+	<script src="../cameras.js" ></script>		
+	<script>
+		
+		var vec3 = glMatrix.vec3
+		var mat4 = glMatrix.mat4
+		var quat = glMatrix.quat
+		
+		var width = 600
+		var height = 600
+		var cx = 300
+		var cy=520
+		var scale = width/2
+		
+		var animate = true
+		
+		var canvas = document.getElementById('canvas')
+		var trace = document.getElementById('trace')
+		
+		
+		var ctx = canvas.getContext('2d')
+		
+		canvas.width=width
+		canvas.height=height
+		
+		ctx.strokeStyle='#111'
+		ctx.fillStyle = '#000'
+		ctx.lineWidth=4
+		ctx.lineJoin ='round'
+		ctx.lineCap='round'
+		
+	
+	
+		
+		
+		function Bone(pos){
+			
+			//local
+			this.position = vec3.clone(pos)
+			this.rotation = quat.create()
+			
+			
+			//world
+			this.worldPosition = vec3.create()
+			this.worldRotation = quat.create()
+			
+			this.origin = vec3.create()
+		}
+		
+		Bone.prototype.update = function(parent){
+			
+			if(parent){
+				
+				vec3.transformQuat( this.position, this.position, this.rotation)
+				quat.multiply( this.worldRotation, parent.worldRotation, this.rotation )
+				vec3.add( this.worldPosition, parent.worldPosition, this.position)
+				vec3.copy( this.origin, parent.worldPosition)
+				
+			}else{
+				
+				quat.copy( this.worldRotation, this.rotation)
+				vec3.transformQuat( this.position, this.position, this.rotation)
+				vec3.copy( this.worldPosition, this.position)
+				
+			}
+		}
+		function updateBones(bones){
+			
+			bones[0].update()
+			
+			for(var i=1; i<bones.length;i++){
+				bones[i].update(bones[i-1])
+			}
+			
+		}
+		function drawBones(ctx, bones, m, colors ){
+			
+			
+			
+			for(var i =0;i< bones.length;i++){
+				
+				var p = vec3.transformMat4( mat4.create(), bones[i].worldPosition,m)
+				var o = vec3.transformMat4( mat4.create(), bones[i].origin,m)
+				ctx.beginPath()
+				ctx.moveTo( cx + o[0]*scale, cy - o[1]*scale )
+				ctx.lineTo( cx + p[0]*scale, cy - p[1]*scale )
+				ctx.strokeStyle = colors[i] || 'red'
+				ctx.stroke()
+			}
+			
+		}
+		function solveIK(bones,target){
+			
+			var l = bones.length
+			var effector = vec3.clone(bones[l-1].worldPosition )
+			var v0 = []
+			var v1 = []
+			var q = quat.create()
+			
+			for( var i=0; i< 16; i++){
+				
+				for(var j=l-1; j>=0; --j){
+					
+					var bone = bones[j]
+					
+					vec3.sub( v0, effector, bone.origin )
+					vec3.sub( v1, target, bone.origin )
+					vec3.normalize(v0,v0)
+					vec3.normalize(v1,v1)
+					quat.rotationTo(q,v0,v1)
+					quat.copy( bone.rotation, q )
+				
+					effector = rotateAround( effector, q, bone.origin )
+				}
+				
+				updateBones( bones )
+				effector = vec3.clone(bones[l-1].worldPosition )
+				
+				if( distance(target,effector) < 0.01 ){
+					return i
+				}
+			}
+			
+			return false
+		}
+	
+	
+		var bones=[
+			new Bone( [0,0.5,0] ),
+			new Bone( [0,0.5,0] ),
+			new Bone( [0,0.5,0] ),
+			new Bone( [0,0.5,0] )
+		]
+		updateBones( bones)
+		
+		var origin = [0,0,0]
+		var target =[ 0,0,0]
+		var angle =0
+		
+		var camera = lookAtCamera()
+		camera.setDistance(5)
+		camera.setPhi(0.2)
+		camera.updateStatic()
+		
+		var projection = mat4.perspective(mat4.create(), 0.78, 1, 0.1, 100.0)
+		
+		var colors =['red','lime','ivory','dodgerblue']
+		
+		function draw( delta ){
+			
+			delta *= 0.1
+			//var start = performance.now()
+			var i
+			
+			var sinAngle = Math.sin(angle)
+			var cosAngle = Math.cos(angle)
+			
+			vec3.set( target, cosAngle, easeIn(Math.abs(sinAngle))*3, 0)
+			
+			var view = mat4.multiply( mat4.create(), projection, camera.matrix )
+			
+			
+			ctx.clearRect(0,0,width,height)
+			
+			var wt = vec3.transformMat4([], target, view)
+			vec3.scale(wt,wt,scale)
+			
+			
+			solveIK( bones,target)
+			
+			drawBones(ctx,bones,view,colors)
+			drawCircle( wt, 20, 'orange')
+			
+			
+			angle += 0.012*delta
+			
+			camera.setLambda(angle*0.168)
+			camera.updateStatic()
+			//trace.textContent = ( performance.now() - start ).toFixed(2)
+			
+		}
+		
+		function rotateAround( p, q, o){
+			
+			var out = vec3.create()
+			vec3.sub(out, p, o)
+			vec3.transformQuat(out,out,q)
+			
+			return vec3.add(out, out, o )
+		}
+		
+		//squared dist
+		function distance(a,b){
+			var dx = a[0] - b[0]
+			var dy = a[1] - b[1]
+			var dz = a[2] - b[2]
+			return ( dx*dx+dy*dy+dz*dz)
+		}
+		function lerp( a,b,t){
+			return a + t * ( b - a )
+		}
+		function lerp2(a, b, t) {
+		  return (1 - t) * a + t * b;
+		}
+		function ease(t) { return t<.5 ? 2*t*t : -1+(4-2*t)*t }
+		function easeOut(t) { return t*(2-t) }
+		function easeIn(t) { return t*t }
+
+	
+		function drawLine(ctx,x0,y0,x1,y1, color, w){
+			ctx.beginPath()
+			
+			ctx.moveTo( x0, y0 )
+			ctx.lineTo( x1, y1 )
+			if(w) ctx.lineWidth=w
+			ctx.strokeStyle = color || 'orange'
+			ctx.stroke()
+		}
+		
+		function drawCircle( c,r,fs,ss,lw){
+			
+			var x = cx + c[0]
+			var y = cy - c[1]
+			ctx.moveTo(x, y )
+			ctx.beginPath()
+			ctx.arc( x,y,r,0,Math.PI*2)
+			
+			if(fs){
+				ctx.fillStyle = fs
+				ctx.fill()
+			}
+			if(ss){
+				
+				if(lw) ctx.lineWidth=lw
+				ctx.strokeStyle = ss
+				
+				ctx.stroke()
+			}
+			
+			
+		}
+		
+		
+		/*=============== LOOP ==========================*/
+		var last = 0
+	
+		
+		function loop(time){
+			
+			if(animate) requestAnimationFrame(loop)
+			
+			var delta = time - last
+			
+			last = time
+			
+			draw( delta )
+			
+		
+		}
+		
+		
+		requestAnimationFrame(loop)
+		
+		
+		
+	</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
