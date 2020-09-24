@@ -1,0 +1,1017 @@
+<DOCTYPE html>
+<html lang="en" >
+<head>
+	<meta charset="utf-8">
+	<title>Spider Walk</title>
+	<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
+	<style>
+	html,body{
+		margin:0;
+		padding:0;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+	}
+	body{ 
+		background: black;
+	}
+	#canvas{
+		position: absolute;
+		left:50%;
+		right:0;
+		top:50%;
+		bottom:0;
+		transform: translate(-50%,-50%);
+		display: block;
+		max-width: 100%;
+		max-height: 100%;
+		box-sizing: border-box;
+		
+		background: black;
+	}
+	label{
+		display: block;
+		text-align; right;
+		font-size: 14px;
+		font-family: Helvetica;
+		margin: 10px 10px;
+	}
+	label span{
+		vertical-align: top;
+	}
+	input[type=range]{
+		width: 200px;
+	}
+	input{
+		width: auto;
+		outline: none;
+	}
+	#controls{
+		position: fixed;
+		right:0;
+		top:0;
+		z-index:1;
+		background: transparent;
+		padding: 20px 20px 20px 20px;
+		color: ivory;
+		display: block;
+	}
+	#trace{
+		color: ivory;
+		padding: 20px;
+		position: fixed;
+		left:0;
+		top:0;
+		font-size: 18px;
+	}
+	</style>
+</head>
+<body>
+	
+	<canvas id="canvas" ></canvas>
+	<div id="controls">
+		
+	<label><span>A</span>
+	<input type="range"  min="0.0" max="3.14" step="0.001" oninput="setLambda(this.value);" value="0.4">
+	</label>
+	<!--
+	<label><span>B</span>
+	<input type="range"  min="0.002" max="0.08" step="0.001" oninput="setSpeed(this.value);" value="0.02">
+	</label>
+	<label><span>C</span>
+	<input type="range"  min="0.0" max="1.57" step="0.001" onchange="setStep(this.value);" value="0.78">
+	</label>
+	-->
+	</div> 
+	
+	<div id="trace"></div>
+	
+	
+	
+	<script src="../gl-matrix.js" ></script>
+	<script src="../vec2.js" ></script>
+	<script src="../cameras.js" ></script>	
+	<script>
+		
+		var vec3 = glMatrix.vec3
+		var mat4 = glMatrix.mat4
+		var quat = glMatrix.quat
+		
+		let rightDown = false
+		let leftDown = false
+		let upDown = false
+		let downDown = false
+		let zDown = false
+		let xDown = false
+		
+		
+		var HPI = Math.PI/2
+		var QPI = Math.PI/4
+		var PI = Math.PI
+		var TWOPI = Math.PI*2
+		var SQRT2 = Math.sqrt(2)
+		var SQRT22 = Math.sqrt(2)*2
+		
+		var width = 600
+		var height = 600
+		
+		var cx = width/2
+		var cy = 480
+		var scale  = 300
+		
+		
+		var animate = true
+		
+		
+		var canvas = document.getElementById('canvas')
+		var trace = document.getElementById('trace')
+		
+		
+		var ctx = canvas.getContext('2d')
+		
+		canvas.width=width
+		canvas.height=height
+		
+		ctx.strokeStyle='#111'
+		ctx.fillStyle = '#000'
+		ctx.lineWidth=2
+		ctx.lineJoin ='round'
+		ctx.lineCap='round'
+		
+		var stick ={
+			origin: new Vec2(500,500),
+			pos: new Vec2(500,500),
+			radius: 30,
+			maxRadius: 60,
+			dir:new Vec2(),
+			active: false,
+			forward:new Vec2(0,1),
+			backward:new Vec2(0,-1),
+			draw: function(ctx){
+				
+				
+				if(!this.active){ 
+					
+					this.pos.copy(this.origin)
+					this.dir.multiplyScalar(0.8)
+				}
+				else{
+					 this.dir = this.pos.clone().sub( this.origin )
+					 
+					 if( this.dir.lengthSq() > this.maxRadius*this.maxRadius){
+						 this.dir.clampLength( this.maxRadius )
+					 }
+				 }
+				var pos = this.origin.clone().add( this.dir)
+				ctx.fillStyle = 'orange'
+				ctx.strokeStyle = 'orange'
+				
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.beginPath()
+				ctx.arc(this.origin.x, this.origin.y,this.radius,0,Math.PI*2)
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.lineTo( pos.x, pos.y)
+				ctx.stroke()
+				/*
+				ctx.moveTo( this.origin.x, this.origin.y)
+				ctx.beginPath()
+				ctx.arc(this.origin.x, this.origin.y,this.maxRadius,0,Math.PI*2)
+				ctx.stroke()
+				*/
+				
+				
+				ctx.moveTo( pos.x, pos.y)
+				ctx.beginPath()
+				ctx.arc(pos.x, pos.y,this.radius,0,Math.PI*2)
+				ctx.fill()
+			}
+		}
+	
+		var mouse = {
+			
+			
+			pos: new Vec2(),
+			lastPos: new Vec2(),
+			startPos:new Vec2(),
+			delta: new Vec2(),
+			direction: new Vec2(),
+			down: false,
+			target: null,
+			targetOffset: new Vec2(),
+			targetActive: false,
+			update: function(e,w){
+				
+				if(e.touches && e.touches.length !== 1) return false
+			
+				var rect = e.target.getBoundingClientRect()
+				
+				var event = e.touches && e.touches.length === 1 ? e.touches[0] : e;
+				
+				var scale =  w / rect.width
+				
+				var x = ( event.clientX - rect.left ) * scale 
+				var y = ( event.clientY - rect.top ) * scale
+				
+				this.pos.set( x,y)
+				
+			}
+		}
+		mouse.target = stick
+		
+		//functions for frustum culling grid
+		function extractEdges(faces){
+	
+			var edges = []
+			var check = []
+			var i,j,min,max,a,b,key,face
+			
+			for( i=0,l=faces.length; i< l;i++){
+				
+				face = faces[i]
+				
+				for(j=0,l2=face.length;j< l2;j++){
+					
+					a = face[j]
+					b = face[ (j + 1) % l2]
+					min = Math.min( a, b )
+					max = Math.max( a ,b)
+					key = min+'_'+max
+					
+					if( check.indexOf(key) === -1){
+						edges.push([a,b])
+						check.push(key);
+					}
+				}
+			}
+			
+			return edges
+		}
+		function classifyPoint( plane, pt ){
+ 
+			const d = plane[0]*pt[0] + plane[1]*pt[1] + plane[2]*pt[2] + plane[3]
+			
+			if (d >= 0) return true
+		 
+			return false
+		}
+	
+		function normalizePlane(plane){
+			
+			const mag = Math.sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2])
+			 plane[0] /= mag
+			 plane[1] /= mag
+			 plane[2] /= mag
+			 plane[3] /= mag
+		}
+		function setFrustumPlanes(m,planes){
+ 
+			planes = planes || [[],[],[],[],[],[]]
+			
+			//left
+			planes[0][0] = m[3]  +  m[0]
+			planes[0][1] = m[7]  +  m[4]
+			planes[0][2] = m[11] +  m[8]
+			planes[0][3] = m[15] + m[12]
+			
+			//right
+			planes[1][0] = m[3]  -  m[0]
+			planes[1][1] = m[7]  -  m[4]
+			planes[1][2] = m[11] -  m[8]
+			planes[1][3] = m[15] - m[12]
+			
+			//top
+			planes[2][0] = m[3]  +  m[1]
+			planes[2][1] = m[7]  +  m[5]
+			planes[2][2] = m[11] +  m[9]
+			planes[2][3] = m[15] + m[13]
+			
+			//bottom
+			planes[3][0] = m[3]  -  m[1]
+			planes[3][1] = m[7]  -  m[5]
+			planes[3][2] = m[11] -  m[9]
+			planes[3][3] = m[15] - m[13]
+			
+			//near
+			planes[4][0] = m[3]  +  m[2]
+			planes[4][1] = m[7]  +  m[6]
+			planes[4][2] = m[11] + m[10]
+			planes[4][3] = m[15] + m[14]
+			
+			//far
+			planes[5][0] = m[3]  -  m[2]
+			planes[5][1] = m[7]  -  m[6]
+			planes[5][2] = m[11] - m[10]
+			planes[5][3] = m[15] - m[14]
+			/*
+			for(let i=0;i<6;i++){
+				normalizePlane( planes[i] )
+			}
+			*/
+			return planes
+		 
+		 }
+		
+		 function pointInFrustum(planes,point){
+			 
+			 for(let i=0;i<6;i++){
+				 
+				 const vtest = classifyPoint( planes[i], point )
+				
+				 if( !vtest ) return false
+			 }
+			 
+			 return true
+		 }
+		 
+		var planes = [[],[],[],[],[],[]]
+		
+		function createGridFaces( size, s ){
+			
+			var v = [], f=[], e=[],count=0
+			
+			var odd = (size & 1), flag = 0
+			for( var i=0; i <= size; i++){
+				for(var j=0;j <= size; j++){
+					
+					v.push( [ (j/size - 0.5) *size*s, 0, -(i/size - 0.5)*size*s])
+					
+					
+					if(i<size && j<size){
+						
+						var a = [count,count+size+1,count+size+2,count+1]
+						
+						a.odd = flag
+						a.index = count
+						f.push(a)
+					}
+					flag = 1 - flag
+					count++
+				}
+				
+				if(odd) flag = 1 - flag
+			}
+			
+			return {
+				
+				vertices: v, 
+				faces: f
+				 
+			}
+			
+		}
+		
+		function drawGridEdges( ctx, g, edges, m ,color){
+			
+			setFrustumPlanes( m,planes)
+			
+			var i,j,k,vec
+			var verts = []
+			
+			for(i=0; i< g.vertices.length;i++){
+				
+				vec = vec3.copy( [], g.vertices[i] )
+				vec.inside = pointInFrustum(planes,g.vertices[i]) 
+				vec3.transformMat4( vec, vec, m )
+				verts.push( vec)
+				
+				
+			}
+			
+			ctx.strokeStyle = color || 'orange'
+			
+			ctx.beginPath()
+			for(i=0; i< edges.length;i++){
+				
+				
+				var a = verts [ edges[i][0] ]
+				var b = verts [ edges[i][1] ]
+				
+				if( !a.inside && !b.inside) continue
+				
+				ctx.moveTo( cx + a[0] * scale, cy - a[1] * scale ) 
+				ctx.lineTo( cx + b[0] * scale, cy - b[1] * scale ) 
+				
+			}
+			ctx.stroke()
+			
+			
+		}
+		
+		function lerp(a, b, t) {
+			
+		  return (1 - t) * a + t * b;
+		}
+		
+		function clamp(num, min, max) {
+			return num < min ? min : (num > max ? max : num);
+		}
+		function easeSin(t) {
+			return (1 + Math.sin(Math.PI * t - Math.PI / 2)) / 2;
+		}
+		function ease(t) { return t<.5 ? 2*t*t : -1+(4-2*t)*t }
+		function easeOut(t) { return t*(2-t) }
+		function easeIn(t) { return t*t }
+
+		function easeInStrong(t) { return t*t*t*t*t }
+		function easeOutStrong(t) { return 1+(--t)*t*t*t*t }
+		function easeStrong(t)  { return t<.5 ? 16*t*t*t*t*t : 1+16*(--t)*t*t*t*t }
+		
+		
+		function solveKnee( leg, body, len){
+			
+			var v = vec3.sub( [], leg, body )
+			var l = vec3.length( v )
+			var half = vec3.normalize([],v)
+			
+			vec3.scale( half, half, len*0.5)
+			
+			if( l >= len){
+				
+				return vec3.add([], body, half )
+				
+			}
+			var angle = Math.acos( l / len )
+			var axis = vec3.cross([], v, [ 0, 1, 0]  )
+			vec3.normalize( axis, axis )
+			
+			var q = quat.setAxisAngle( [], axis, angle)
+			
+			vec3.transformQuat( half, half, q )
+			
+			return vec3.add( half,half, body)
+			
+		}
+		function centroidXZ(pts){
+			
+			var centroid = [0,0,0];
+			var signedArea = 0.0;
+			var x0 = 0.0; 
+			var y0 = 0.0;
+			var x1 = 0.0;
+			var y1 = 0.0;
+			var a = 0.0;
+			var l = pts.length;
+			
+			var i=0;
+			for (i=0; i<l; ++i)
+			{
+				x0 = pts[i][0];
+				y0 = pts[i][2];
+				x1 = pts[(i+1) % l][0];
+				y1 = pts[(i+1) % l][2];
+				a = x0*y1 - x1*y0;
+				signedArea += a;
+				centroid[0] += (x0 + x1)*a;
+				centroid[2] += (y0 + y1)*a;
+			}
+
+			signedArea *= 0.5;
+			centroid[0] /= (6.0*signedArea);
+			centroid[2] /= (6.0*signedArea);
+
+			return centroid;
+		}
+		var player ={
+			
+			position:[0,0,0],
+			rotation:quat.create(),
+			angle:0,
+			dir:[0,0,1],
+			matrix: mat4.create(),
+			body:[ 0, 1, 0],
+			dummy:[
+				[-1, 0,-2.5],
+				[ 1, 0,-2,5],
+				[-2, 0,-1],
+				[ 2, 0,-1],
+				[-2, 0, 1],
+				[ 2, 0, 1],
+				[-1, 0, 2.5],
+				[ 1, 0, 2.5]
+			],
+			legs:[
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0]
+			],
+			knees:[
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0],
+				[0, 0, 0]
+			],
+			legLength:3.6,
+			index:0,
+			seq:[0,1],
+			pairs:[[0,3,4,7],[1,2,5,6]],
+			target:[],
+			stepLength:2,
+			speed:0.03,
+			turnSpeed:1,
+			moveDir: 1,
+			paused:false,
+			t:0,
+			start:[],
+			rotate: function(v){
+				
+				this.angle += v
+				quat.rotateY( this.rotation, this.rotation, v )
+				this.updateTarget()
+				
+			},
+			update: function(delta){
+				
+				if( this.paused && this.t >= 1-this.speed){
+					
+					this.t = 1
+					
+					 return
+				 }
+				
+				
+				var e = this.t
+				var y =  Math.sin( e * PI )*0.2
+				
+				var i
+				var pair = this.pairs[ this.seq[ this.index ] ]
+				
+				this.legs[ pair[0] ][0] = lerp( this.start[0][0], this.target[0][0], e)
+				this.legs[ pair[0] ][2] = lerp( this.start[0][2], this.target[0][2], e)
+				this.legs[ pair[0] ][1] = y
+				
+				this.legs[ pair[1] ][0] = lerp( this.start[1][0], this.target[1][0], e)
+				this.legs[ pair[1] ][2] = lerp( this.start[1][2], this.target[1][2], e)
+				this.legs[ pair[1] ][1] = y
+				
+				this.legs[ pair[2] ][0] = lerp( this.start[2][0], this.target[2][0], e)
+				this.legs[ pair[2] ][2] = lerp( this.start[2][2], this.target[2][2], e)
+				this.legs[ pair[2] ][1] = y
+				
+				this.legs[ pair[3] ][0] = lerp( this.start[3][0], this.target[3][0], e)
+				this.legs[ pair[3] ][2] = lerp( this.start[3][2], this.target[3][2], e)
+				this.legs[ pair[3] ][1] = y
+			
+				
+				var poly = [
+					this.legs[0],
+					this.legs[1],
+					this.legs[3],
+					this.legs[5],
+					this.legs[7],
+					this.legs[6],
+					this.legs[4],
+					this.legs[2]
+				]
+				var c = centroidXZ(poly)
+				this.body[0] = c[0]
+				this.body[2] = c[2]
+				this.position[0] = this.body[0] 
+				this.position[2] = this.body[2]
+				
+				
+				for(i=0;i<this.knees.length;i++){
+					
+					this.knees[i] = solveKnee( this.legs[i], this.body, this.legLength)
+				}
+				this.t += this.speed*this.turnSpeed*delta
+				
+				if(this.t > 1){
+					
+					this.t=0
+					
+					vec3.copy(this.legs[ pair[0] ], this.target[0])
+					vec3.copy(this.legs[ pair[1] ], this.target[1])
+					vec3.copy(this.legs[ pair[2] ], this.target[2])
+					vec3.copy(this.legs[ pair[3] ], this.target[3])
+					
+					this.index = ( this.index + 1)  % this.seq.length
+					this.updateTarget()
+					
+				}
+				
+				mat4.fromRotationTranslation( this.matrix, this.rotation, this.position )
+				
+			},
+			init:function(){
+				
+				for(var i=0;i<this.dummy.length;i++){
+					
+					vec3.copy( this.legs[i], this.dummy[ i ] )
+				
+				}
+				
+				this.updateTarget()
+				this.update(0)
+			},
+			updateTarget:function(){
+				
+				var v = vec3.transformQuat( [], this.dir, this.rotation )
+				if( this.moveDir < 0) vec3.negate( v, v)
+				vec3.scale( v, v, this.stepLength )
+				
+				this.start=[]
+				this.target=[]
+				
+				var pair = this.pairs[ this.seq[ this.index ] ]
+				
+				this.start[0] = vec3.copy([], this.legs[pair[0]] )
+				this.start[1] = vec3.copy([], this.legs[pair[1]] )
+				this.start[2] = vec3.copy([], this.legs[pair[2]] )
+				this.start[3] = vec3.copy([], this.legs[pair[3]] )
+				 
+				
+				
+				var t1 = vec3.transformQuat([], this.dummy[ pair[0] ], this.rotation)
+				vec3.add( t1, v, t1)
+				
+				var t2 = vec3.transformQuat([], this.dummy[ pair[1] ], this.rotation)
+				vec3.add( t2, v, t2)
+				
+				var t3 = vec3.transformQuat([], this.dummy[ pair[2] ], this.rotation)
+				vec3.add( t3, v, t3)
+				
+				var t4 = vec3.transformQuat([], this.dummy[ pair[3] ], this.rotation)
+				vec3.add( t4, v, t4)
+				
+				this.target[0] = vec3.add( [], t1, this.position )
+				this.target[1] = vec3.add( [], t2, this.position )
+				this.target[2] = vec3.add( [], t3, this.position )
+				this.target[3] = vec3.add( [], t4, this.position )
+			},
+			draw: function( ctx, m ){
+				
+				var parts = this.legs.slice(0)
+				
+				var i
+				var pos=[]
+				
+				for(i=0; i< parts.length;i++){
+					
+					pos[i] = vec3.transformMat4([], parts[i], m )
+					
+					
+				}
+				var b = vec3.transformMat4([],this.body,m)
+				ctx.fillStyle = 'red'
+				ctx.strokeStyle='lime'
+				
+				
+				//legs
+				ctx.beginPath()
+				for(i=0; i< this.legs.length;i++){
+					
+					var p = pos[i]
+					var k = vec3.transformMat4([],this.knees[i],m)
+					
+					ctx.moveTo( cx + b[0] * scale, cy - b[1] * scale)
+					ctx.lineTo( cx + k[0] * scale, cy - k[1] * scale)
+					ctx.lineTo( cx + p[0] * scale, cy - p[1] * scale)
+					
+				}
+				
+				ctx.stroke()
+				
+				ctx.beginPath()
+				//knees
+				for(i=0; i< this.knees.length;i++){
+					
+					var p = vec3.transformMat4([], this.knees[i], m )
+					ctx.moveTo( cx + p[0] * scale, cy - p[1] * scale)
+					ctx.arc( cx + p[0] * scale, cy - p[1] * scale, 3,0,TWOPI)
+					
+				}
+				
+				
+				ctx.fill()
+				
+				ctx.moveTo( cx + b[0] * scale, cy - b[1] * scale)
+				ctx.beginPath()
+				ctx.arc( cx + b[0] * scale, cy - b[1] * scale, 3,0,TWOPI)
+				ctx.fill()
+				
+				ctx.beginPath()
+				for(i=0; i< parts.length;i++){
+					
+					var p = pos[i]
+					
+					ctx.moveTo( cx + p[0] * scale, cy - p[1] * scale)
+					ctx.arc( cx + p[0] * scale, cy - p[1] * scale, 3,0,TWOPI)
+					
+				}
+				
+				ctx.fill()
+				
+			}
+		
+		}
+		
+		
+		var grid = createGridFaces(16,3)
+		var edges = extractEdges( grid.faces)
+		
+	
+		var camera = lookAtCamera()
+		camera.setLambda(0)
+		camera.setPhi(0.5)
+		camera.setDistance(20)
+		camera.updateStatic()
+		
+		
+		
+		var projection = mat4.perspective( mat4.create(), 0.7, 1, 0.01, 100 )
+		var view = mat4.multiply( mat4.create(), projection, camera.matrix )
+		
+		
+		
+		player.init()
+		player.paused=true
+		
+		function draw( delta ){
+			
+			delta *= 0.1
+			
+			var start = performance.now()
+			if( stick.active ){
+				
+				if( Math.abs(stick.dir.y ) > 10){
+					player.paused = false
+					player.moveDir = -Math.sign(stick.dir.y)
+					player.update(delta)
+				}
+				else player.paused = true
+				
+				if( !player.paused && Math.abs(stick.dir.x ) > 20){
+					player.paused = false
+					player.rotate(0.01*-Math.sign(stick.dir.x) )
+					player.turnSpeed = 1
+					player.stepLength = 0.4
+					
+				}
+				else{ 
+					player.turnSpeed = 1
+					player.stepLength = 2
+				}
+			
+				
+			}
+			else{
+			
+				
+				if( upDown ){
+					
+					player.moveDir = 1
+					player.paused = false
+				}
+				else if( downDown ){
+					
+					player.moveDir = -1
+					player.paused = false
+				}
+				else{
+					
+					player.paused = true
+				}
+				
+				if( leftDown && !player.paused ){
+					player.rotate(0.01 )
+					player.turnSpeed = 1
+					player.stepLength=0.4
+					
+					
+				}
+				else if( rightDown && !player.paused ){
+					player.rotate( -0.01 )
+					player.turnSpeed = 1
+					player.stepLength=0.4
+					
+				}
+				else{
+					
+					player.turnSpeed = 1
+					player.stepLength=2
+				}
+				
+				player.update(delta)
+			}
+			
+			if( zDown ){
+				camera.lambda += 0.02
+				
+				
+			}
+			else if( xDown ){
+				camera.lambda -= 0.02
+				
+			}
+			
+			
+			camera.updateDynamic( player.position, player.angle )
+			
+			var matrix = mat4.multiply([], camera.matrix, player.matrix )
+			
+			view = mat4.multiply( [], projection, matrix )
+			view2 = mat4.multiply( [], projection, camera.matrix )
+		
+			ctx.clearRect(0,0,width,height)
+			
+			
+			drawGridEdges( ctx, grid,edges, view2 ,'darkslategray')
+			
+			player.draw(ctx,view2)
+			
+			
+			stick.draw(ctx)
+			
+			
+			
+			//trace.textContent = ( performance.now() - start ).toFixed(2)
+			
+		}
+		function setLambda(v){
+			camera.lambda = +v
+			camera.updateDynamic( player.position, player.angle )
+		}
+		function setSpeed(v){
+			player.speed = +v
+		}
+		function setStep(v){
+			
+			player.legAngle = +v
+			
+		}
+		
+		/*=============== LOOP ==========================*/
+		var last = 0
+	
+		
+		function loop(time){
+			
+			if(animate) requestAnimationFrame(loop)
+			
+			var delta = time - last
+			
+			last = time
+			
+			draw( delta )
+			
+		
+		}
+		
+		
+		requestAnimationFrame(loop)
+		
+		
+		//mouse
+		function onDown(e){
+			
+			mouse.update( e, width )
+			
+			
+			
+			mouse.delta.zero()
+			mouse.direction.zero()
+			
+			mouse.lastPos.copy( mouse.pos )
+			mouse.startPos.copy( mouse.pos )
+			
+			mouse.down = true
+			
+			if( mouse.target ){
+				
+				var offset = mouse.target.pos.clone().sub( mouse.pos )
+				
+				mouse.targetOffset.copy( offset )
+				
+				if(offset.length() < mouse.target.radius){
+					 mouse.targetActive = true
+					 mouse.target.active = true
+				 }
+				
+			}
+		}
+		function onUp(e){
+			
+			mouse.down = false
+			
+			
+			mouse.delta.zero()
+			mouse.direction.zero()
+			mouse.targetOffset.zero()
+			mouse.targetActive=false
+			mouse.target.active = false
+			
+		}
+		function onMove(e){
+			
+			mouse.update( e, width )
+			
+			if(mouse.down){
+				
+				var delta = mouse.pos.clone().sub( mouse.lastPos )
+				
+				mouse.direction = mouse.pos.clone().sub( mouse.startPos )
+				
+				
+				if(delta.lengthSq() > 25){
+					
+					mouse.delta = delta
+					mouse.lastPos.copy( mouse.pos )
+				}
+				
+				if(mouse.target && mouse.targetActive){
+					
+					mouse.target.pos.copy( mouse.pos.clone().add( mouse.targetOffset) )
+					
+				}
+			}
+		}
+		
+		
+		canvas.addEventListener('mousedown',onDown,false)
+		canvas.addEventListener('mouseup',onUp,false)
+		canvas.addEventListener('mousemove',onMove,false)
+		canvas.addEventListener('mouseleave',onUp,false)
+		
+		if( 'ontouchstart' in window){
+			
+			canvas.addEventListener('touchstart', onDown, false)
+			canvas.addEventListener('touchmove', onMove, false)
+			canvas.addEventListener('touchcancel', onUp, false)
+			canvas.addEventListener('touchend', onUp, false)
+		}
+		//bind keys
+			
+		function onKeyDown(e) {
+		
+			if(e.keyCode == 39 || e.keyCode == 68 ) {
+				rightDown = true
+			}
+			else if(e.keyCode == 37 || e.keyCode == 65 ) {
+				
+				leftDown = true
+				
+			}
+			if(e.keyCode == 40  || e.keyCode == 83 ) {
+				downDown = true
+				
+			}
+			else if(e.keyCode == 38 || e.keyCode == 87  ) {
+				upDown = true
+			}
+			
+			if(e.keyCode == 90 ) {
+				zDown = true
+				
+			}
+			else if(e.keyCode == 88) {
+				xDown = true
+			}
+		}
+		function onKeyUp(e) {
+			
+			if(e.keyCode == 39 || e.keyCode == 68) {
+				rightDown = false
+			}
+			else if(e.keyCode == 37 || e.keyCode == 65) {
+				leftDown = false
+			}
+			if(e.keyCode == 40 || e.keyCode == 83) {
+				downDown = false
+			}
+			else if(e.keyCode == 38 || e.keyCode == 87) {
+				upDown = false
+			}
+			if(e.keyCode == 90 ) {
+				zDown = false
+				
+			}
+			else if(e.keyCode == 88) {
+				xDown = false
+			}
+		}
+		
+		document.addEventListener('keydown', onKeyDown, false)
+		document.addEventListener('keyup', onKeyUp, false)
+		
+		
+	</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
