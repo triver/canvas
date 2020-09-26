@@ -229,13 +229,12 @@ function Grid( radius, size, cx, cy ){
 			
 			var z = -x - y
 			var hex = new Hex(x,y,z) 
+			
 			hex.cost=1
 			hex.value=0
 			hex.center = hex.toPoint( this.size )
-			hex.points = getHexPoints( hex, this.size )
 			
 			this.hexes.push( hex )
-			
 			this.ref[ hex.getKey() ] = hex
 		}
 	}
