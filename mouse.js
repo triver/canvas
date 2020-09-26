@@ -29,9 +29,11 @@ const mouse ={
 		var event = e.touches && e.touches.length === 1 ? e.touches[0] : e
 		
 		if(fixedWidth){
+			
 			const s = fixedWidth / rect.width
-			this.x = (event.clientX - rect.left) * s
-			this.y = (event.clientY - rect.top) * s
+			
+			this.x = (event.clientX - rect.left) * s 
+			this.y = (event.clientY - rect.top ) * s 
 			
 		}else{
 	
@@ -55,6 +57,7 @@ const mouse ={
 	onDown:function(){},
 	onUp:function(){},
 	onMove:function(){},
+	onDrag:function(){},
 	onDragX:function(){},
 	onDragY:function(){},
 	onDragZ:function(){},
@@ -101,9 +104,10 @@ function onMove(e){
 	
 	e.preventDefault()
 	
-	if(!mouse.down) return 
-	
 	mouse.update(e)
+	mouse.onMove( mouse.x, mouse.y )
+	
+	if(!mouse.down) return 
 	
 	mouse.dx = mouse.sx - mouse.x
 	mouse.dy = mouse.sy - mouse.y
@@ -116,6 +120,8 @@ function onMove(e){
 	const dx = mouse.x - mouse.lx
 	const dy = mouse.y - mouse.ly
 	const dz = Math.sqrt( dx*dx+dy*dy )
+	
+	mouse.onDrag( mouse.x, mouse.y, dx, dy, dz )
 
 	if( mouse.axis === 'z'){
 		
@@ -143,7 +149,7 @@ function onMove(e){
 		
 	}
 	
-	mouse.onMove( mouse.x, mouse.y, dx, dy)
+	
 	
 	mouse.lx = mouse.x
 	mouse.ly = mouse.y
