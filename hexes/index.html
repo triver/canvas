@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+	<meta charset="utf-8">
+	<title>Hex Grid Coordinates</title>
+	<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
+	<style>
+	html,body{
+			margin:0;
+			padding:0;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+		}
+		body{ 
+			background:black;
+			color: #8b8b8b;
+		}
+		#wrapper{
+			position: absolute;
+			left:50%;
+			right:0;
+			top:50%;
+			transform: translate(-50%,-50%);
+			width: 100%;
+			max-width: 600px;
+			margin: 0 auto;
+			background: slategray;
+			overflow: hidden;
+		}
+		#canvas{
+		
+			display: block;
+			max-width: 100%;
+			max-height: 100%;
+			background:slategray;
+			margin: 0;
+		}
+		
+		#trace{
+			position: fixed;
+			top:10px;
+			left: 20px;
+			color: black;
+		}
+	</style>
+	<body>
+	<div id="wrapper">
+		<canvas id="canvas"></canvas>
+		
+		<div id="trace"></div>
+	</div>
+	<script src="hexgrid.js"></script>
+	<script src="binaryheap.js"></script>
+	<script src="../mouse.js"></script>
+	<script>
+	
+	
+	var trace = document.getElementById('trace')
+	
+	var width = 600
+	var height = 600
+	var cx =width/2
+	var cy = height/2
+	
+		
+	var canvas = document.getElementById('canvas')
+	var ctx = canvas.getContext('2d')
+	
+	var last = 0
+	
+	canvas.width = width
+	canvas.height = height
+	ctx.lineWidth = 1
+	
+	var mouse = Mouse( canvas, width )
+	
+	/*========================================*/
+	
+	var size = 32
+	var radius = 8
+	var grid = new Grid( radius ,size, cx, cy )
+	
+	var selected = null
+	
+	
+	
+	mouse.onDrag = function( x,y){
+		
+		selected = grid.getHexAtPoint( x - cx , y - cy  )
+		draw()
+	}
+	mouse.onUp = function( x,y){
+		
+		selected = null
+		draw()
+	}
+	
+	function draw(){
+		
+		ctx.clearRect(0,0,width,height)
+		
+		grid.draw( ctx, 'black' )
+		grid.drawCoords( ctx )
+		
+		if(selected){
+			 
+			 grid.drawHex(ctx, selected, 'springgreen')
+			 
+		}
+		
+	}
+	
+	draw()
+	</script>
+	</body>
+</html>
