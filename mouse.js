@@ -2,7 +2,7 @@
 
 let currentElement=false
 let fixedWidth=false
-
+const MIN_DRAG_DIST = 4
 const mouse ={
 			
 	x:null,
@@ -18,6 +18,7 @@ const mouse ={
 	oy:0,
 	axis:false,
 	down:false,
+	isDrag:false,
 	state:0,
 	update:function(e){
 		
@@ -53,11 +54,13 @@ const mouse ={
 		this.ly = null
 		this.down = false
 		this.axis = null
+		this.isDrag=false
 	},
 	onDown:function(){},
 	onUp:function(){},
 	onMove:function(){},
 	onDrag:function(){},
+	onDragStart:function(){},
 	onDragX:function(){},
 	onDragY:function(){},
 	onDragZ:function(){},
@@ -93,7 +96,7 @@ function onUp(e){
 	mouse.dx = mouse.sx - mouse.x
 	mouse.dy = mouse.sy - mouse.y
 	
-	if(Math.abs( mouse.dx ) < 2 && Math.abs( mouse.dy ) < 2){
+	if(( mouse.dx*mouse.dx + mouse.dy*mouse.dy  ) < MIN_DRAG_DIST * MIN_DRAG_DIST ){
 		
 		mouse.onClick( mouse.x, mouse.y, mouse.dx, mouse.dy )
 	}
@@ -112,7 +115,7 @@ function onMove(e){
 	mouse.dx = mouse.sx - mouse.x
 	mouse.dy = mouse.sy - mouse.y
 	
-	if(Math.abs( mouse.dx ) < 2 && Math.abs( mouse.dy ) < 2){
+	if( ( mouse.dx*mouse.dx + mouse.dy*mouse.dy  ) < MIN_DRAG_DIST * MIN_DRAG_DIST ){
 		
 		return
 	}
@@ -121,6 +124,11 @@ function onMove(e){
 	const dy = mouse.y - mouse.ly
 	const dz = Math.sqrt( dx*dx+dy*dy )
 	
+	if( !mouse.isDrag){
+		
+		mouse.onDragStart( mouse.x, mouse.y, dx, dy, dz, mouse.sx, mouse.sy )
+		mouse.isDrag = true
+	}
 	mouse.onDrag( mouse.x, mouse.y, dx, dy, dz )
 
 	if( mouse.axis === 'z'){

@@ -1,7 +1,8 @@
 // Binary Heap implementation by bgrins https://github.com/bgrins/javascript-astar
-// Based on implementation by Marijn Haverbeke http://eloquentjavascript.net/1st_edition/appendix2.html
+
 
 var BinaryHeap = function (scoreFunction) {
+	
     this.content = [];
     this.scoreFunction = scoreFunction;
 };

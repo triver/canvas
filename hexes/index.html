@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 	<meta charset="utf-8">
-	<title>Hex Grid Coordinates</title>
+	<title>Hex Grid</title>
 	<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
 	<style>
 	html,body{
@@ -80,33 +80,55 @@
 	var radius = 8
 	var grid = new Grid( radius ,size, cx, cy )
 	
-	var selected = null
-	
+	var start = null
+	var current = null
+	var path = null
 	
 	
 	mouse.onDrag = function( x,y){
 		
-		selected = grid.getHexAtPoint( x - cx , y - cy  )
+		current = grid.getHexAtPoint( x - cx , y - cy  )
+		
+		
+		if(current){
+			
+			if(!start) start = current
+			
+			path = grid.findPath( start, current )
+		}
+		
 		draw()
 	}
 	mouse.onUp = function( x,y){
 		
-		selected = null
+		start=null
+		current = null
+		path=null
 		draw()
 	}
-	
+	mouse.onClick = function( x, y ){
+		
+		var hex = grid.getHexAtPoint( x - cx , y - cy  )
+		
+		if(hex){
+			 hex.blocked = 1 - hex.blocked
+		}
+		draw()
+	}
 	function draw(){
 		
 		ctx.clearRect(0,0,width,height)
 		
+		grid.drawBlocked( ctx, 'rgba(0,0,0,0.2)' )
 		grid.draw( ctx, 'black' )
 		grid.drawCoords( ctx )
 		
-		if(selected){
+		if(path){
+			 grid.drawHexArray( ctx, path, 'blue' )
+			 grid.drawHex(ctx, start, 'blue')
+		 }
 			 
-			 grid.drawHex(ctx, selected, 'springgreen')
-			 
-		}
+		
 		
 	}
 	

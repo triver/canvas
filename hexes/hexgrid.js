@@ -11,6 +11,7 @@ var PI2_6 = PI2 / 6
 var TWO_THIRDS = 2 / 3
 var ONE_THIRD = 1 / 3
 var THREE_OVER_TWO = 3 / 2
+var EPSILON = 0.0000001
 
 //skip Math
 var round = Math.round
@@ -29,6 +30,34 @@ var DIAGONALS =[
    [2, -1, -1], [ 1, 1, -2],[-1, 2, -1], 
    [-2,  1,  1], [-1, -1, 2],[ 1, -2, 1]
 ]
+
+
+
+function Heap() {
+	
+	if (!BinaryHeap) throw new Error("BinaryHeap was not found.")
+	
+	return new BinaryHeap( function (node) {
+		return node.F
+	})
+}
+//NODE
+function Node(hex, parent, g, h) {
+	
+	this.hex = hex
+	this.parent = null
+	this.G = null
+	this.H = null
+	this.F = null
+	this.rescore(parent, g, h)
+}
+
+Node.prototype.rescore = function (parent, g, h) {
+	this.parent = parent
+	this.G = g
+	this.H = h || 0
+	this.F = this.G + this.H
+}
 
 //POINT
 function Point( x, y){
@@ -149,9 +178,10 @@ Hex.prototype.length = function (){
 	
     return ( abs(this.x) + abs(this.y) + abs(this.z) ) / 2;
 }
+
 Hex.prototype.distanceTo = function ( other )
 {
-    return new Hex( this.x,this.y,this.z).subtract( other ).length()
+    return max( abs(this.x - other.x), abs(this.y - other.y), abs(this.z - other.z) )
 }
 Hex.prototype.equals = function( x, y, z ){
 	
@@ -232,6 +262,7 @@ function Grid( radius, size, cx, cy ){
 			
 			hex.cost=1
 			hex.value=0
+			hex.blocked = 0
 			hex.center = hex.toPoint( this.size )
 			
 			this.hexes.push( hex )
@@ -300,11 +331,8 @@ Grid.prototype.getDiagonalNeighbors = function(a) {
 	return neighbors;
 	
 }
-Grid.prototype.getCircle = function(n, dir) {
+Grid.prototype.getCircle = function( hex, n, dir) {
 	
-	if(!n) return [ this.getHex(0,0,0) ]
-	
-	if( n > this.radius ) return []
 	
 	dir = dir || 4
 	
@@ -313,16 +341,19 @@ Grid.prototype.getCircle = function(n, dir) {
 	for( i = 0; i < 6; i++ ){
 		for( j = 0; j < n; j++ ){
 			
-			hexes.push( this.getHex( cur ) )
+			var h = this.getHex( cur.x + hex.x, cur.y + hex.y )
+			
+			if(h) hexes.push( h )
+			
 			cur = cur.step( i )
 		}
 	}
 	
 	return hexes
 }
-Grid.prototype.getRange = function(n) {
+Grid.prototype.getRange = function( hex , n) {
 	
-	if( n > this.radius ) return []
+	
 	
 	var hexes = []
 	
@@ -330,8 +361,9 @@ Grid.prototype.getRange = function(n) {
 		
 		for (var y = max(-n, -x - n); y <= min(n, -x + n); y++){
 			
-			var z = -x - y
-			hexes.push( this.getHex(x, y, z) )
+			var h = this.getHex( x + hex.x, y + hex.y )
+			
+			if(h) hexes.push( h )
 		}
 	}
 	return hexes
@@ -344,8 +376,8 @@ Grid.prototype.getLine = function( a, b) {
 		i,r,
 		step = 1.0 / max(n, 1)
 	
-	var an = new Hex( a.x + 0.000001, a.y + 0.000001, a.z - 0.000002 )
-	var bn = new Hex( b.x + 0.000001, b.y + 0.000001, b.z - 0.000002 )
+	var an = new Hex( a.x + EPSILON, a.y + EPSILON, a.z - EPSILON )
+	var bn = new Hex( b.x + EPSILON, b.y + EPSILON, b.z - EPSILON )
 	
 	for(i=0; i < n;i++){
 		
@@ -355,91 +387,74 @@ Grid.prototype.getLine = function( a, b) {
 	}
 	return hexes
 }
-/*Pathfinder*/
-
-Grid.Search = {};
-
-Grid.Search.Heap = function () {
-	
-	if (!BinaryHeap) throw new Error("BinaryHeap was not found.");
-	
-	return new BinaryHeap(function (node) {
-		return node.F;
-	});
-};
-
-Grid.Search.Node = function (hex, parent, g, h) {
-	this.hex = hex;
-	this.parent = this.G = this.H = this.F = null;
-	this.rescore(parent, g, h);
-};
-
-Grid.Search.Node.prototype.rescore = function (parent, g, h) {
-	this.parent = parent;
-	this.G = g;
-	this.H = h || 0;
-	this.F = this.G + this.H;
-};
 
 Grid.prototype.findPath = function (start, end) {
 	
 	var grid = this,
-		openHeap = new Grid.Search.Heap(),
+		heap = Heap(),
 		closedHexes = {},
-		visitedNodes = {};
+		visitedNodes = {}
 	
-	openHeap.push(new Grid.Search.Node(start, null, 0, start.distanceTo(end)  ));
+	heap.push( new Node( start, null, 0, start.distanceTo( end )  ) )
 	
-	while(openHeap.size() > 0) {
-		// Get the item with the lowest score (current + heuristic).
-		var current = openHeap.pop();
+	while( heap.size() > 0 ) {
 		
-		// SUCCESS: If this is where we're going, backtrack and return the path.
-		if (current.hex.equals(end)) {
-			var path = [];
+		
+		var current = heap.pop()
+		
+		
+		if ( current.hex.equals( end ) ) {
+			
+			var path = []
+			
 			while(current.parent) {
-				path.push(current);
-				current = current.parent;
+				
+				path.push( current )
+				current = current.parent
 			}
-			return path.map(function(x) { return x.hex; }).reverse();
+			
+			
+			return path.map(function(x) { return x.hex }).reverse()
 		}
 		
-		// Close the hex as processed.
-		closedHexes[current.hex.getKey()] = current;
+	
+		closedHexes[ current.hex.getKey() ] = current
 		
-		// Get and iterate the neighbors.
-		var neighbors = grid.getNeighbors(current.hex);
+		
+		var neighbors = grid.getNeighbors( current.hex )
 		
 		neighbors.forEach(function(n) {
-			// Make sure the neighbor is not blocked and that we haven't already processed it.
-			if (n.blocked || closedHexes[n.getKey()]) return;
 			
-			// Get the total cost of going to this neighbor.
+		
+			if ( n.blocked || closedHexes[ n.getKey() ] ) return
+			
+			
 			var g = current.G + n.cost,
-				visited = visitedNodes[n.getKey()];
+				visited = visitedNodes[ n.getKey() ]
 			
-			// Is it cheaper the previously best path to get here?
+			
 			if (!visited || g < visited.G) {
-				var h = n.distanceTo( end);
+				
+				var h = n.distanceTo( end)
 				
 				if (!visited) {
-					// This was the first time we visited this node, add it to the heap.
-					var nNode = new Grid.Search.Node(n, current, g, h);
-					closedHexes[nNode.hex.getKey()] = nNode;
-					openHeap.push(nNode);
+					
+					var nNode = new Node(n, current, g, h)
+					closedHexes[ nNode.hex.getKey() ] = nNode
+					heap.push( nNode )
+					
 				} else {
-					// We've visited this path before, but found a better path. Rescore it.
-					visited.rescore(current, g, h);
-					openHeap.rescoreElement(visited);
+					
+					
+					visited.rescore( current, g, h )
+					heap.rescoreElement( visited )
 				}
 			}
-		});
+		})
 	}
 
-	return [];
+	return []
 }
-//lineof sight
-
 Grid.prototype.getLineOfSight = function (start, end) {
 	
 	
@@ -451,38 +466,49 @@ Grid.prototype.getLineOfSight = function (start, end) {
 		cStart = start.clone(),
 		cEnd1 = end.clone(),
 		cEnd2 = end.clone(),
-		step = 1.0 / max( N, 1)
+		step = 1.0 / max( N, 1);
 	
 	
-	cEnd1.x -= 1e-6; cEnd1.y -= 1e-6; cEnd1.z += 2e-6;
-	cEnd2.x += 1e-6; cEnd2.y += 1e-6; cEnd2.z -= 2e-6;
+	cEnd1.x -= EPSILON 
+	cEnd1.y -= EPSILON 
+	cEnd1.z += EPSILON
+	
+	cEnd2.x += EPSILON 
+	cEnd2.y += EPSILON 
+	cEnd2.z -= EPSILON
 	
 	for (var i = 0; i <= N; i++) {
 		
-		var pos = cStart.lerp( cEnd1, step * i);
+		var pos = cStart.lerp( cEnd1, step * i)
 		
-		var hex = this.getHex(pos);
+		var hex = this.getHex( pos.x, pos.y )
 		
 		if (!start.equals(hex)) {
+			
 			if (!hex.blocked) {
-				line1.push(hex);
-			} else break;
+				
+				line1.push(hex)
+				
+			} else break
 		}
 	}
 
 	for (var i = 0; i <= N; i++) {
 		var pos = cStart.lerp( cEnd2, step * i);
 		
-		var hex = this.getHex(pos);
+		var hex = this.getHex(pos.x, pos.y)
 		
 		if (!start.equals(hex)) {
+			
 			if (!hex.blocked) {
-				line2.push(hex);
-			} else break;
+				
+				line2.push(hex)
+				
+			} else break
 		}
 	}
 	
-	return (line1.length > line2.length) ? line1 : line2;
+	return (line1.length < line2.length) ? line1 : line2;
 }
 
 
@@ -514,7 +540,35 @@ Grid.prototype.draw = function( ctx, color ){
 	ctx.strokeStyle = color || '#000000'
 	ctx.stroke()
 }
-
+Grid.prototype.drawBlocked = function( ctx, color ){
+	
+	ctx.beginPath()
+	
+	
+	for(var i=0; i<this.hexes.length;i++){
+		
+		if( !this.hexes[i].blocked) continue
+		
+		var c = this.hexes[i].center
+		var p = this.dummy[0]
+		
+		ctx.moveTo( this.originX + c.x + p.x, this.originY + c.y + p.y)
+		
+		for(var j=1; j < this.dummy.length;j++){
+			
+			p = this.dummy[j]
+			ctx.lineTo( this.originX + c.x + p.x, this.originY + c.y + p.y)
+			
+		}
+		
+		p = this.dummy[0]
+		
+		ctx.lineTo( this.originX + c.x + p.x, this.originY + c.y + p.y)
+	}
+	
+	ctx.fillStyle = color || '#000000'
+	ctx.fill()
+}
 Grid.prototype.drawCoords= function( ctx, color ){
 	
 	for(var i=0; i < this.hexes.length; i++ ){
@@ -528,7 +582,7 @@ Grid.prototype.drawCoords= function( ctx, color ){
 	
 }
 
-Grid.prototype.drawHex = function( ctx, hex, color, fill ){
+Grid.prototype.drawHex = function( ctx, hex, fill, stroke ){
 	
 	var c = hex.center
 	var p = this.dummy[0]
@@ -547,11 +601,27 @@ Grid.prototype.drawHex = function( ctx, hex, color, fill ){
 	
 	ctx.lineTo( this.originX + c.x + p.x, this.originY + c.y + p.y)
 	
-	ctx.strokeStyle = color || '#000000'
-	ctx.stroke()
+	if(fill){
+		ctx.fillStyle = fill
+		ctx.fill()
+	}
+	if(stroke){
+		ctx.strokeStyle = stroke
+		ctx.stroke()
+	}
 	
 }
-
+Grid.prototype.drawHexArray = function( ctx, hexes, fill , stroke){
+	
+	for(var i=0; i< hexes.length;i++){
+		
+		var fillColor = Array.isArray( fill ) ? fill[i % fill.length ] : fill
+		var strokeColor = Array.isArray( stroke ) ? stroke[i % stroke.length ] : stroke
+		
+		this.drawHex( ctx, hexes[i], fillColor, strokeColor)
+	}
+	
+}
 
 /*END*/
 
