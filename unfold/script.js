@@ -295,7 +295,7 @@ function initFold( geomName ){
 		var n2 = geom.normals[ childIdx  ]
 		
 		var ei
-		for(j=0; j< geom.edgeFaces.length; j++){
+		for(var j=0; j< geom.edgeFaces.length; j++){
 			
 			var k = geom.edgeFaces[j]
 			if( k.indexOf( parentIdx ) > -1 && k.indexOf(childIdx ) > -1 ){
